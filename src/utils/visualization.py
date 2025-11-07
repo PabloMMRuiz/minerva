@@ -8,6 +8,11 @@ import seaborn as sns
 import os
 from typing import Optional, Tuple, List
 import networkx as nx
+import pandas as pd
+from statsmodels.tsa.seasonal import seasonal_decompose
+
+# ---------------------------------------------
+# Graph graphs...
 
 
 def plot_adjacency_matrix_heatmap(  # I NEED to fit arguments in one line before it triggers my ocd
@@ -544,3 +549,177 @@ def plot_degree_distribution(
     else:
         plt.close(fig)
         return None
+
+
+# -------------------------------------------
+# Time series graphs
+
+def plot_node_time_series(
+        data_array: np.ndarray,
+        node_index: int,
+        feature_index: int = 0,
+        title: str = None,
+        x_0: int = None,
+        x_1: int = None,
+        save_path: Optional[str] = None,
+        show: bool = True,
+        figsize: Tuple[int, int] = (14, 6),
+        return_fig: bool = False) -> Optional[Tuple[plt.Figure, plt.Axes]]:
+    """
+    Plots the time series data for a single node.
+
+    Args:
+        data_array (np.ndarray): The time series data array with shape [L, N, C].
+        node_index (int): The index of the node (N) to plot.
+        feature_index (int, optional): The index of the feature (C) to plot, defaults to 0.
+        title (str, optional): A custom title for the plot.
+        x_0 (int, optional): time step at which to start the plot
+        x_1 (int, optional): time step at which to end the plot
+        save_path: Path to save the figure (e.g., 'results/heatmap.png'). 
+                   If None, figure is not saved.
+        show: If True, display the plot. Set to False to prevent blocking.
+        figsize: Figure size as (width, height).
+        return_fig: If True, return (fig, ax) tuple for further customization.
+
+    Returns:
+        Tuple of (figure, axes) if return_fig=True, otherwise None.
+
+
+
+    """
+    L, N, C = data_array.shape
+
+    if not (0 <= node_index < N):
+        print(
+            f"Error: Node index {node_index} is out of bounds. Valid range is 0 to {N-1}.")
+        return
+
+    if not (0 <= feature_index < C):
+        print(
+            f"Error: Feature index {feature_index} is out of bounds. Valid range is 0 to {C-1}.")
+        return
+    fig, ax = plt.subplots(figsize=figsize)
+    # Extract the time series for the specified node and feature
+    time_series = data_array[:, node_index, feature_index]
+    if x_0 and x_1:
+        time_series = time_series[x_0:x_1]
+    elif x_0:
+        time_series = time_series[x_0:]
+    elif x_1:
+        time_series = time_series[:x_1]
+    # Create a DataFrame for easy plotting with seaborn
+    df = pd.DataFrame(
+        {'value': time_series, 'time_step': range(len(time_series))})
+
+    sns.lineplot(data=df, x='time_step', y='value')
+
+    if title is None:
+        ax.set_title(
+            f'Time Series for Node {node_index} (Feature {feature_index})', fontsize=16)
+    else:
+        ax.set_title(title, fontsize=16)
+
+    ax.set_xlabel('Time steps', fontsize=12)
+
+    if save_path is not None:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to: {save_path}")
+
+    if show:
+        plt.show()
+
+    if return_fig:
+        return fig, ax
+    else:
+        plt.close(fig)
+        return None
+
+
+def plot_time_series_decomposition(
+        data_array: np.ndarray,
+        node_index: int,
+        frequency: int,
+        feature_index: int = 0,
+        x_0: int = None,
+        x_1: int = None,
+        save_path: Optional[str] = None,
+        show: bool = True,
+        figsize: Tuple[int, int] = (15, 12),
+        return_fig: bool = False):
+    """
+    Performs and plots a time series decomposition for a single node.
+
+    This function decomposes the time series into trend, seasonal, and residual components.
+    It requires the frequency of the seasonal pattern in terms of time steps.
+
+    Args:
+        data_array (np.ndarray): The time series data array with shape [L, N, C].
+        node_index (int): The index of the node to plot.
+        frequency (int): The number of time steps per seasonal cycle (e.g., 288 for a daily cycle with 5-minute frequency).
+        feature_index (int, optional): The index of the feature to plot, defaults to 0.
+
+    """
+    L, N, C = data_array.shape
+
+    if not (0 <= node_index < N):
+        print(
+            f"Error: Node index {node_index} is out of bounds. Valid range is 0 to {N-1}.")
+        return
+
+    if not (0 <= feature_index < C):
+        print(
+            f"Error: Feature index {feature_index} is out of bounds. Valid range is 0 to {C-1}.")
+        return
+
+    if L < frequency * 2:
+        print(
+            f"Not enough data points ({L}) to perform decomposition with frequency {frequency}. At least two full cycles are recommended.")
+        return
+
+    # Extract the time series for the specified node and feature
+    time_series = data_array[:, node_index, feature_index]
+    if x_0 and x_1:
+        time_series = time_series[x_0:x_1]
+    elif x_0:
+        time_series = time_series[x_0:]
+    elif x_1:
+        time_series = time_series[:x_1]
+    # Perform additive decomposition
+    # Additive model: Y(t) = T(t) + S(t) + R(t) is a good default for data with constant seasonal amplitude.
+    try:
+        result = seasonal_decompose(
+            time_series, model='additive', period=frequency)
+        # Plot the decomposed components
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(
+            4, 1, figsize=figsize, sharex=True)
+        ax1.plot(result.observed)
+        ax1.set_title('Observed')
+        ax2.plot(result.trend)
+        ax2.set_title('Trend')
+        ax3.plot(result.seasonal)
+        ax3.set_title('Seasonal')
+        ax4.plot(result.resid)
+        ax4.set_title('Residual')
+
+        plt.suptitle(
+            f'Time Series Decomposition for Node {node_index}', fontsize=18)
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        if save_path is not None:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Figure saved to: {save_path}")
+
+        if show:
+            plt.show()
+
+        if return_fig:
+            return fig, (ax1, ax2, ax3, ax4)
+        else:
+            plt.close(fig)
+            return None
+    except ValueError as e:
+        print(
+            f"Decomposition failed. The data might not be suitable for the specified frequency. Error: {e}")

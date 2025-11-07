@@ -16,13 +16,15 @@ from .visualization import (
     draw_graph_with_hubs,
     plot_degree_distribution,
     compare_adjacency_matrices_heatmap,
+    plot_node_time_series,
+    plot_time_series_decomposition,
 )
 __all__ = [
     # graph metrics
     "calculate_graph_metrics",
     "is_connected",
     "compare_adjacency_matrices",
-    # visualization
+    # graph visualization
     "plot_adjacency_matrix_heatmap",
     "draw_graph_network",
     "draw_graph_components",
@@ -30,4 +32,7 @@ __all__ = [
     "draw_graph_with_hubs",
     "plot_degree_distribution",
     "compare_adjacency_matrices_heatmap",
+    # time series visualization
+    "plot_node_time_series",
+    "plot_time_series_decomposition",
 ]
