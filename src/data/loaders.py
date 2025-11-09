@@ -15,9 +15,8 @@ from typing import Tuple, Optional, Dict, Any, List
 from pathlib import Path
 
 
-# ============================================================================
+# ------------------------------------------------------
 # METADATA LOADING
-# ============================================================================
 
 def load_dataset_description(folder_path: str) -> Optional[Dict[str, Any]]:
     """
@@ -106,9 +105,9 @@ def print_dataset_description(folder_path: str) -> None:
     print(f"Outlier Handling: {settings.get('NULL_VAL', 'N/A')}")
 
 
-# ============================================================================
+# --------------------------------------------
 # TIME SERIES DATA LOADING
-# ============================================================================
+
 
 def load_dataset_as_memmap(
     folder_path: str,
@@ -170,9 +169,8 @@ def load_dataset_as_memmap(
         return None, False
 
 
-# ============================================================================
+# ---------------------------------------
 # ADJACENCY MATRIX LOADING
-# ============================================================================
 
 def load_pkl(pickle_file: str) -> Any:
     """
@@ -197,6 +195,25 @@ def load_pkl(pickle_file: str) -> Any:
         print(f'Unable to load data from {pickle_file}: {e}')
         raise
     return pickle_data
+
+def save_pkl(data_object: object, output_file: str): # I know this should not be here
+    """
+    Saves a Python object to a pickle file.
+
+    Args:
+        data_object (object): The object (e.g., np.ndarray, np.matrix, list) to be saved.
+        pickle_file (str): The destination path for the pickle file.
+    """
+    try:
+        # 'wb' mode opens the file for writing in binary mode
+        with open(output_file, 'w+b') as f:
+            pickle.dump(data_object, f, protocol=pickle.HIGHEST_PROTOCOL)
+        print(f"Object successfully saved to {output_file}")
+        
+    except Exception as e:
+        print(f'Error: Unable to save data to {output_file}: {e}')
+        raise
+
 
 
 def load_adj(
@@ -256,9 +273,8 @@ def load_adj(
     return adj, adj_mx
 
 
-# ============================================================================
+# --------------------------------------------------
 # CONVENIENCE FUNCTIONS
-# ============================================================================
 
 def load_dataset(
     folder_path: str,

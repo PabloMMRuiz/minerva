@@ -7,12 +7,11 @@ into different representations suitable for GNN models.
 
 import numpy as np
 import scipy.sparse as sp
-from typing import Union, Tuple
+from typing import Tuple
 
 
-# ============================================================================
+# --------------------------------------------
 # LAPLACIAN MATRICES
-# ============================================================================
 
 def calculate_scaled_laplacian(adj: np.ndarray, lambda_max: int = 2, undirected: bool = True) -> np.matrix:
     """
@@ -72,9 +71,8 @@ def calculate_symmetric_normalized_laplacian(adj: np.ndarray) -> np.matrix:
     return laplacian
 
 
-# ============================================================================
+# ------------------------------------------------------------
 # MESSAGE PASSING / DIFFUSION MATRICES
-# ============================================================================
 
 def calculate_symmetric_message_passing_adj(adj: np.ndarray) -> np.matrix:
     """
@@ -126,9 +124,8 @@ def calculate_transition_matrix(adj: np.ndarray) -> np.matrix:
 
     return prob_matrix
 
-# ============================================================================
+# -----------------------------------------------
 # UTILITY FUNCTIONS
-# ============================================================================
 
 
 def add_self_loops(adj_mx: np.ndarray, fill_value: float = 1.0) -> np.ndarray:
@@ -190,9 +187,37 @@ def symmetrize_adjacency(adj_mx: np.ndarray, method: str = 'avg') -> np.ndarray:
                          f"Choose from: 'avg', 'max', 'min'")
 
 
-# ============================================================================
+def reshape_time_series_2_d(data_array: np.ndarray, feature_index: int = 0) -> np.ndarray:
+    """
+    Extracts a single feature and reshapes the time series data for correlation analysis.
+
+    The input shape is [L, N, C] (Time Steps, Nodes, Features).
+    The output shape is [L, N] (Time Steps, Nodes), which is required by np.corrcoef.
+
+    Args:
+        data_array (np.ndarray): The time series data array with shape [L, N, C].
+        feature_index (int, optional): The index of the feature (C) to use. Defaults to the first feature (0), which is usually the target.
+
+    Returns:
+        np.ndarray: The reshaped array with shape [L, N].
+    """
+    L, N, C = data_array.shape
+
+    if not (0 <= feature_index < C):
+        raise ValueError(
+            f"Feature index {feature_index} is out of bounds. Valid range is 0 to {C-1}.")
+
+    # (slicing keeps the [L, N, 1] shape)
+    single_feature_data = data_array[:, :, feature_index]
+    # .
+    # so we squeeze it back in
+    shaped_data = np.squeeze(single_feature_data)
+
+    return shaped_data
+
+
+# -------------------------------------------------------------
 # DEGREE MATRIX OPERATIONS
-# ============================================================================
 
 def get_degree_matrix(adj_mx: np.ndarray) -> np.ndarray:
     """
@@ -235,9 +260,8 @@ def get_inverse_degree_matrix(adj_mx: np.ndarray, power: float = -1.0, epsilon: 
     return np.diag(degrees_power)
 
 
-# ============================================================================
+# --------------------------------------------------------------------
 # VALIDATION
-# ============================================================================
 
 def validate_adjacency_matrix(adj_mx: np.ndarray) -> Tuple[bool, str]:
     """

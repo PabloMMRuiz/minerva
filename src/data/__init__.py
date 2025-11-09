@@ -8,6 +8,7 @@ from .loaders import (
     load_dataset_as_memmap,
     load_pkl,
     load_adj,
+    save_pkl,
     load_dataset
 )
 
@@ -18,7 +19,8 @@ from .preprocessing import (
     calculate_transition_matrix,
     add_self_loops,
     remove_self_loops,
-    symmetrize_adjacency
+    symmetrize_adjacency,
+    reshape_time_series_2_d,
 )
 
 __all__ = [
@@ -37,4 +39,7 @@ __all__ = [
     'add_self_loops',
     'remove_self_loops',
     'symmetrize_adjacency',
+    'reshape_time_series_2_d',
+    # move this out of here
+    'save_pkl'
 ]
