@@ -24,86 +24,73 @@ def make_adjacency_matrix(
     mask: Optional[str] = None,
     normalize: Optional[str] = None,
     norm_strength: float = 1.0,
-    mask_params: Optional[dict] = None
+    mask_params: Optional[dict] = None,
+    fill_diag: bool = False
 ) -> np.ndarray:
     """
     Creates a sparse adjacency matrix by selecting edges and normalizing.
 
-    Pipeline: correlation matrix → masking → normalization → sparse adjacency
+    Pipeline: correlation matrix → masking → (optional diagonal fill) → normalization → sparse adjacency
 
     Args:
         corr_matrix: The N x N correlation/similarity matrix
         k: Number of edges to keep (interpretation depends on mask method)
-        mask: Sparsification method. Options:
-              - 'top-k-row': Top-k per node (local budget)
-              - 'top-k-global': Top-k globally
-              - 'greedy-degree-regularize': Degree-regularized greedy
-              - 'threshold-mask': Threshold-based with budget
-              - 'spectral-sparce': Approximate spectral sparsification
-              - 'strict-spectral-sparce': Exact spectral sparsification
-              - 'top-k-row-global-limit': K-NN with global budget
-              - 'dhont-corr-sum': D'Hondt allocation by correlation sum
-              - 'dhont-top-edge': D'Hondt allocation by top edge
-        normalize: Normalization method. Options:
-                   - 'row-l1': Row sums to norm_strength
-                   - 'row-softmax': Row-wise softmax
-                   - 'softmax': Global softmax
-                   - 'row-minmax': Row-wise min-max normalization
-                   - 'minmax': Global min-max normalization
-                   - 'make-1': Set non-zero edges to 1
-                   - None: No normalization
+        mask: Sparsification method
+        normalize: Normalization method
         norm_strength: Scaling factor for normalization (default: 1.0)
-        mask_params: Additional parameters for mask functions (e.g., penalty_factor)
+        mask_params: Additional parameters for mask functions
+        fill_diag: If True, subtracts N from k and ensures the diagonal is filled with 1s.
 
     Returns:
         Sparse adjacency matrix (N x N)
-
-    Raises:
-        ValueError: If mask or normalize method is unknown
     """
     N = corr_matrix.shape[0]
     mask_params = mask_params or {}
 
-    # Ensure matrix is positive (take absolute value)
+    # Actual number of edges that will be provided by the corr_matrix calculations.
+    effective_k = max(0, k - N) if fill_diag else k
+    # Methods expect a positive matrix
     adj = np.abs(corr_matrix)
 
-    # Apply masking
     if mask is None:
-        # No sparsification - keep all edges
         mask_matrix = np.ones_like(adj, dtype=bool)
 
     elif mask == 'top-k-row':
-        edges_per_node = int(k / N)
+        edges_per_node = int(effective_k / N)
         mask_matrix = top_k_row_mask(corr_matrix, edges_per_node)
 
     elif mask == 'top-k-global':
-        mask_matrix = global_top_e_mask(corr_matrix, k, directed=True)
+        mask_matrix = global_top_e_mask(
+            corr_matrix, effective_k, directed=True)
 
     elif mask == 'greedy-degree-regularize':
         penalty_factor = mask_params.get('penalty_factor', 0.1)
         mask_matrix = degree_regularized_greedy_mask(
-            corr_matrix, k, penalty_factor, directed=True
+            corr_matrix, effective_k, penalty_factor, directed=True
         )
 
     elif mask == 'threshold-mask':
-        mask_matrix = threshold_with_budget_mask(corr_matrix, k)
+        mask_matrix = threshold_with_budget_mask(corr_matrix, effective_k)
 
     elif mask == 'spectral-sparce':
-        mask_matrix = spectral_sparsification_proxy_mask(corr_matrix, k)
+        mask_matrix = spectral_sparsification_proxy_mask(
+            corr_matrix, effective_k)
 
     elif mask == 'strict-spectral-sparce':
-        mask_matrix, _ = resistance_spectral_sparsify(corr_matrix, k)
+        mask_matrix, _, _ = resistance_spectral_sparsify(
+            corr_matrix, effective_k)
 
     elif mask == 'top-k-row-global-limit':
-        k_per_node = mask_params.get('k_per_node', k // N * 3)
-        mask_matrix = knn_with_global_budget_mask(corr_matrix, k, k_per_node)
+        k_per_node = mask_params.get('k_per_node', effective_k // N * 3)
+        mask_matrix = knn_with_global_budget_mask(
+            corr_matrix, effective_k, k_per_node)
 
     elif mask == 'dhont-corr-sum':
         mask_matrix = dhondt_proportional_allocation_sum_correlation(
-            corr_matrix, k)
+            corr_matrix, effective_k)
 
     elif mask == 'dhont-top-edge':
-        mask_matrix = dhondt_top_edge_allocation_mask(corr_matrix, k)
+        mask_matrix = dhondt_top_edge_allocation_mask(corr_matrix, effective_k)
 
     else:
         raise ValueError(f"Unknown mask method: {mask}")
@@ -111,7 +98,9 @@ def make_adjacency_matrix(
     # Apply the mask
     sparse_adj = np.where(mask_matrix, adj, 0)
 
-    # Apply normalization
+    if fill_diag:
+        np.fill_diagonal(sparse_adj, 1.0)
+
     if normalize is not None:
         sparse_adj = normalize_adjacency(sparse_adj, normalize, norm_strength)
 

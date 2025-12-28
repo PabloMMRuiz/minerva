@@ -3,6 +3,7 @@ Boolean masks for edge selection
 """
 
 import numpy as np
+import heapq
 
 
 def top_k_row_mask(corr_matrix: np.ndarray, k: int):
@@ -69,63 +70,90 @@ def global_top_e_mask(corr_matrix: np.ndarray, total_edges: int, directed: bool 
     return mask
 
 
-def degree_regularized_greedy_mask(corr_matrix: np.ndarray, total_edges: int, penalty_factor: float = 0.1, directed: bool = False,) -> np.ndarray:
+def degree_regularized_greedy_mask(
+    corr_matrix: np.ndarray,
+    total_edges: int,
+    penalty_factor: float = 0.1,
+    directed: bool = False
+) -> np.ndarray:
     """
+
     Selects edges greedily based on correlation strength and degree regularization.
 
+
+
     Args:
+
         corr_matrix (np.ndarray): N x N correlation or similarity matrix.
+
         total_edges (int): Desired total number of edges in the graph.
+
         penalty_factor (float): Penalty factor for high-degree nodes.
+
                                 Larger values = more uniform degree distribution. > 1 will cause top-k due to correlation being <1
-        directed (bool): If True, treat matrix as directed; otherwise symmetric (default True). 
+
+        directed (bool): If True, treat matrix as directed; otherwise symmetric (default True).
+
         Duplicates number od edges in undirected graphs
 
+
+
     Returns:
+
         np.ndarray: Boolean mask (N x N) with True for selected edges.
+
     """
     N = corr_matrix.shape[0]
-    W = np.abs(corr_matrix).copy()
-    np.fill_diagonal(W, 0)  # avoid self loops
+    W = np.abs(corr_matrix)
+
+    # Avoid self loops
+    np.fill_diagonal(W, 0)
+
     degrees = np.zeros(N, dtype=int)
-    mask = np.zeros_like(W, dtype=bool)
+    mask = np.zeros((N, N), dtype=bool)
+
+    # We use a heap to increase efficiency
+    edge_heap = []
+
     if directed:
-        # Consider all possible edges
-        edge_indices = [(i, j) for i in range(N) for j in range(N) if i != j]
+        for i in range(N):
+            for j in range(N):
+                if i == j:
+                    continue
+                # Initial score: W[i,j] - penalty * (0 + 0)
+                score = W[i, j]
+                heapq.heappush(edge_heap, (-score, i, j))
     else:
-        # Only upper triangle (we're going to reflect this)
-        edge_indices = [(i, j) for i in range(N) for j in range(i + 1, N)]
+        # Symmetric case: only consider upper
+        for i in range(N):
+            for j in range(i + 1, N):
+                score = W[i, j]
+                heapq.heappush(edge_heap, (-score, i, j))
 
-    # Sort all edges by initial weight descending
-    edge_indices.sort(key=lambda x: W[x[0], x[1]], reverse=True)
+    selected_count = 0
 
-    selected_edges = 0
-    while selected_edges < total_edges and edge_indices:
-        best_edge = None
-        best_score = -np.inf
+    while selected_count < total_edges and edge_heap:
+        neg_score, i, j = heapq.heappop(edge_heap)
+        recorded_score = -neg_score
 
-        # Evaluate candidate scores
-        for (i, j) in edge_indices:
-            # we should consider our hub definition
-            score = W[i, j] - penalty_factor * (degrees[i] + degrees[j])
-            # TODO: define hubs correctly at some point
-            if score > best_score:
-                best_score = score
-                best_edge = (i, j)
+        # Calculate the actual current score based on updated degrees
+        current_score = W[i, j] - penalty_factor * (degrees[i] + degrees[j])
 
-        if best_edge is None:
-            break  # no more edges can be added. Prevents infinity
+        # If the score we popped is better than the real (updated) one, it might not be the maximum anymore
+        # So we update it and rerun. If it was not better, it means it actually was the maximum (it is the updated store)
+        # This entire thing only works because real scores are <= than recorded ones at all times.
+        if recorded_score > current_score + 1e-9:
+            heapq.heappush(edge_heap, (-current_score, i, j))
+            continue
 
-        i, j = best_edge
+        # If we reach here, current_score is valid and is the global maximum
         mask[i, j] = True
         if not directed:
             mask[j, i] = True
+
         degrees[i] += 1
         degrees[j] += 1
-        selected_edges += 1
-
-        # Remove that edge from candidate list
-        edge_indices.remove(best_edge)
+        selected_count += 1
 
     return mask
 
@@ -391,7 +419,7 @@ def spectral_sparsification_proxy_mask(corr_matrix: np.ndarray, total_edges: int
 def resistance_spectral_sparsify(
     corr_matrix: np.ndarray,
     m: int,
-    directed: bool = False,
+    directed: bool = True,
     reweight: bool = True,
     pinv_tol: float = 1e-12,
     seed: int | None = None
