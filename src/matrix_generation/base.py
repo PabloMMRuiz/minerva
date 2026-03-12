@@ -24,7 +24,7 @@ class MatrixGenerator(ABC):
             params: Dictionary of parameters for the generator
         """
         self.name = name
-        self.params = params if params != None else {}
+        self.params = params if params is not None else {}
 
     @abstractmethod
     def generate(self, time_series: np.ndarray) -> np.ndarray:

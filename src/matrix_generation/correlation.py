@@ -4,8 +4,8 @@ Correlation-based matrix generation methods.
 
 import numpy as np
 from typing import Dict, Optional, Any
-from .base import MatrixGenerator
-from ..data.preprocessing import reshape_time_series_2_d
+from matrix_generation.base import MatrixGenerator
+from data.preprocessing import reshape_time_series_2_d
 
 
 class PearsonCorrelationGenerator(MatrixGenerator):
@@ -57,3 +57,40 @@ class PearsonCorrelationGenerator(MatrixGenerator):
         corr_matrix = np.corrcoef(time_series.T)
 
         return corr_matrix.astype(np.float32)
+class PartialCorrelationGenerator(MatrixGenerator):
+    """
+    Calculates the Partial Correlation matrix.
+    Measures the degree of association between two nodes, removing the effect 
+    of all other nodes in the set.
+    """
+
+    def __init__(self, feature_index: int = 0, params: Optional[Dict[str, Any]] = None):
+        super().__init__("partial_correlation", params)
+        self.feature_index = feature_index
+
+    def generate(self, data: np.ndarray) -> np.ndarray:
+        """
+        Input shape: [L, N, C]
+        """
+        # Reshape to [L, N]
+        shaped_data = reshape_time_series_2_d(data, self.feature_index)
+        
+        # Calculate covariance matrix
+        cov = np.cov(shaped_data, rowvar=False)
+        
+        # Calculate precision matrix (inverse covariance)
+        # Use pseudo-inverse if singular
+        try:
+            precision = np.linalg.inv(cov)
+        except np.linalg.LinAlgError:
+            precision = np.linalg.pinv(cov)
+            
+        # Partial correlation: rho_ij.rest = -P_ij / sqrt(P_ii * P_jj)
+        diag = np.diag(precision)
+        outer_sqrt_diag = np.sqrt(np.outer(diag, diag))
+        partial_corr = -precision / outer_sqrt_diag
+        
+        # Diagonal elements should be 1.0
+        np.fill_diagonal(partial_corr, 1.0)
+        
+        return partial_corr.astype(np.float32)

@@ -34,7 +34,7 @@ def calculate_scaled_laplacian(adj: np.ndarray, lambda_max: int = 2, undirected:
     laplacian = calculate_symmetric_normalized_laplacian(adj)
 
     if lambda_max is None:
-        lambda_max, _ = linalg.eigsh(laplacian, 1, which='LM')
+        lambda_max, _ = sp.linalg.eigsh(laplacian, 1, which='LM')
         lambda_max = lambda_max[0]
 
     laplacian = sp.csr_matrix(laplacian)

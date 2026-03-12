@@ -723,3 +723,150 @@ def plot_time_series_decomposition(
     except ValueError as e:
         print(
             f"Decomposition failed. The data might not be suitable for the specified frequency. Error: {e}")
+
+
+def plot_edge_weight_distribution(
+    adj_matrix: np.ndarray,
+    title: str = "Edge Weight Distribution",
+    save_path: Optional[str] = None,
+    show: bool = True,
+    figsize: Tuple[int, int] = (10, 6)
+):
+    """Plots a histogram of non-zero edge weights."""
+    weights = adj_matrix[adj_matrix > 1e-6]
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    if weights.size > 0:
+        sns.histplot(weights, kde=True, ax=ax, color='skyblue')
+        ax.set_title(f"{title} (Non-zero edges: {weights.size})")
+        ax.set_xlabel("Weight")
+        ax.set_ylabel("Frequency")
+    else:
+        ax.text(0.5, 0.5, "No non-zero edges", ha='center', va='center')
+        ax.set_title(title)
+
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_spectral_analysis(
+    adj_matrix: np.ndarray,
+    title: str = "Spectral Analysis",
+    save_path: Optional[str] = None,
+    show: bool = True,
+    figsize: Tuple[int, int] = (12, 5)
+):
+    """Plots the eigenvalues of the adjacency and Laplacian matrices."""
+    # Adjacency eigenvalues
+    adj_eig = np.sort(np.real(np.linalg.eigvals(adj_matrix)))[::-1]
+    
+    # Laplacian eigenvalues
+    L = np.diag(np.sum(adj_matrix, axis=1)) - adj_matrix
+    lap_eig = np.sort(np.real(np.linalg.eigvals(L)))
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+    
+    ax1.plot(adj_eig, 'o-', markersize=4)
+    ax1.set_title("Adjacency Spectrum")
+    ax1.set_ylabel("Eigenvalue (Real)")
+    ax1.set_xlabel("Rank")
+    
+    ax2.plot(lap_eig, 'o-', markersize=4, color='orange')
+    ax2.set_title("Laplacian Spectrum")
+    ax2.set_ylabel("Eigenvalue (Real)")
+    ax2.set_xlabel("Rank")
+    
+    plt.suptitle(title)
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_adjacency_diff(
+    A: np.ndarray,
+    B: np.ndarray,
+    title: str = "Adjacency Difference (A - B)",
+    save_path: Optional[str] = None,
+    show: bool = True,
+    figsize: Tuple[int, int] = (8, 6)
+):
+    """Visualizes the difference between two adjacency matrices."""
+    diff = A - B
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.heatmap(diff, cmap="RdBu_r", center=0, ax=ax)
+    ax.set_title(title)
+    
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_matrix_spy(
+    adj_matrix: np.ndarray,
+    title: str = "Matrix Sparsity Pattern",
+    save_path: Optional[str] = None,
+    show: bool = True,
+    markersize: int = 1
+):
+    """Plots the sparsity pattern of the matrix using plt.spy."""
+    fig, ax = plt.subplots()
+    ax.spy(adj_matrix, markersize=markersize, color='black')
+    ax.set_title(title)
+    
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+
+def plot_node_neighborhood(
+    adj_matrix: np.ndarray,
+    node_idx: int,
+    title: str = None,
+    save_path: Optional[str] = None,
+    show: bool = True,
+    figsize: Tuple[int, int] = (8, 8)
+):
+    """Visualizes a specific node and its direct neighbors."""
+    # Find neighbors
+    out_neighbors = np.where(adj_matrix[node_idx] > 1e-6)[0]
+    in_neighbors = np.where(adj_matrix[:, node_idx] > 1e-6)[0]
+    all_neighbors = np.unique(np.concatenate(([node_idx], out_neighbors, in_neighbors)))
+    
+    # Subgraph
+    sub_adj = adj_matrix[np.ix_(all_neighbors, all_neighbors)]
+    
+    G = nx.DiGraph(sub_adj)
+    G = nx.relabel_nodes(G, {i: f"{all_neighbors[i]}" for i in range(len(all_neighbors))})
+    
+    node_colors = ['red' if n == str(node_idx) else 'skyblue' for n in G.nodes()]
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    pos = nx.spring_layout(G)
+    nx.draw(G, pos, with_labels=True, node_color=node_colors, 
+            edge_color='gray', width=1, ax=ax, node_size=500, font_size=10)
+    
+    if title is None:
+        title = f"Neighborhood of Node {node_idx} ({len(all_neighbors)-1} neighbors)"
+    ax.set_title(title)
+    
+    if save_path:
+        fig.savefig(save_path, bbox_inches='tight')
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)

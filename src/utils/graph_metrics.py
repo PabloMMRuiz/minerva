@@ -7,6 +7,7 @@ and for comparation of graphs
 
 import numpy as np
 from scipy import stats
+import networkx as nx
 
 
 def calculate_graph_metrics(adj_matrix: np.ndarray, directed: bool = True):
@@ -84,13 +85,43 @@ def calculate_graph_metrics(adj_matrix: np.ndarray, directed: bool = True):
         clustering_coeff = triangles / \
             (6 * total_edges) if total_edges > 0 else 0.0
 
+    # --- Advanced Metrics ---
+    # Sparsity
+    sparsity = 1.0 - (total_edges / (num_nodes**2))
+    
+    # Spectral properties
+    L_mat = np.diag(np.sum(adj_matrix, axis=1)) - adj_matrix
+    eigvals = np.linalg.eigvals(L_mat)
+    eigvals = np.sort(np.real(eigvals))
+    
+    # Algebraic connectivity (Fiedler value) is the second smallest eigenvalue
+    algebraic_connectivity = float(eigvals[1]) if len(eigvals) > 1 else 0.0
+    
+    # Spectral Gap of Adjacency Matrix
+    adj_eigvals = np.sort(np.real(np.linalg.eigvals(adj_matrix)))[::-1]
+    spectral_gap = float(adj_eigvals[0] - adj_eigvals[1]) if len(adj_eigvals) > 1 else 0.0
+
+    # Connectivity details via networkx
+    G = nx.DiGraph(adj_matrix) if directed else nx.Graph(adj_matrix)
+    if directed:
+        num_components = nx.number_strongly_connected_components(G)
+        is_weakly_connected = nx.is_weakly_connected(G)
+    else:
+        num_components = nx.number_connected_components(G)
+        is_weakly_connected = num_components == 1
+
     # --- Compile results ---
     metrics = {
         "num_nodes": num_nodes,
         "total_edges": int(total_edges),
         "density": float(density),
+        "sparsity": float(sparsity),
         "avg_connection_strength": float(avg_connection_strength),
         "clustering_coefficient": float(clustering_coeff),
+        "algebraic_connectivity": algebraic_connectivity,
+        "spectral_gap": spectral_gap,
+        "num_components": num_components,
+        "is_connected": is_weakly_connected,
         **degree_stats
     }
 

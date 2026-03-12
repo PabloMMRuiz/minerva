@@ -9,7 +9,9 @@ from .loaders import (
     load_pkl,
     load_adj,
     save_pkl,
-    load_dataset
+    load_dataset,
+    load_gaussian_data,
+    load_sinusoidal_data
 )
 
 from .preprocessing import (
@@ -31,6 +33,8 @@ __all__ = [
     'load_pkl',
     'load_adj',
     'load_dataset',
+    'load_gaussian_data',
+    'load_sinusoidal_data',
     # Preprocessing
     'calculate_scaled_laplacian',
     'calculate_symmetric_normalized_laplacian',

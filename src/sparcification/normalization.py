@@ -1,133 +1,102 @@
 """
-Normalization methods for adjacency matrices.
+Normalization methods implemented as Normalizer classes.
 """
 
 import numpy as np
+from .base import Normalizer
 
 
-def normalize_adjacency(
-    sparse_adj: np.ndarray,
-    method: str,
-    norm_strength: float = 1.0
-) -> np.ndarray:
-    """
-    Normalize sparse adjacency matrix.
-    
-    Args:
-        sparse_adj: Sparse adjacency matrix (with zeros for removed edges)
-        method: Normalization method
-                - 'row-l1': Row sums to norm_strength
-                - 'row-softmax': Row-wise softmax
-                - 'softmax': Global softmax
-                - 'row-minmax': Row-wise min-max
-                - 'minmax': Global min-max
-                - 'make-1': Set non-zero edges to 1
-        norm_strength: Scaling factor for normalization
-    
-    Returns:
-        Normalized adjacency matrix
-    """
-    N = sparse_adj.shape[0]
-    zero_mask = sparse_adj < 1e-6
-    
-    if method == 'row-l1':
-        return _normalize_row_l1(sparse_adj, norm_strength, zero_mask)
-    
-    elif method == 'row-softmax':
-        return _normalize_row_softmax(sparse_adj, norm_strength, zero_mask)
-    
-    elif method == 'softmax':
-        return _normalize_softmax(sparse_adj, norm_strength, zero_mask)
-    
-    elif method == 'row-minmax':
-        return _normalize_row_minmax(sparse_adj, N, zero_mask)
-    
-    elif method == 'minmax':
-        return _normalize_minmax(sparse_adj, zero_mask)
-    
-    elif method == 'make-1':
-        return (~zero_mask).astype(np.float32) # ~ is numpy negation
-    
-    else:
-        raise ValueError(f"Unknown normalization method: {method}")
-
-
-def _normalize_row_l1(
-    sparse_adj: np.ndarray,
-    norm_strength: float,
-    zero_mask: np.ndarray
-) -> np.ndarray:
+class RowL1Normalizer(Normalizer):
     """Row-wise L1 normalization (sum of each row = norm_strength)."""
-    row_sums = sparse_adj.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1  # Avoid division by zero
-    normalized_adj = norm_strength * sparse_adj / row_sums
-    return normalized_adj.astype(np.float32)
+    
+    def __init__(self, norm_strength: float = 1.0):
+        super().__init__("row_l1", norm_strength)
+    
+    def normalize(self, matrix: np.ndarray) -> np.ndarray:
+        row_sums = np.abs(matrix).sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1
+        return (self.norm_strength * matrix / row_sums).astype(np.float32)
 
 
-def _normalize_row_softmax(
-    sparse_adj: np.ndarray,
-    norm_strength: float,
-    zero_mask: np.ndarray
-) -> np.ndarray:
+class RowSoftmaxNormalizer(Normalizer):
     """Row-wise Softmax normalization."""
-    exp_adj = np.exp(sparse_adj)
-    exp_adj[zero_mask] = 0  # Reset original zeros to zero
-    row_sums = exp_adj.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1
-    normalized_adj = norm_strength * exp_adj / row_sums
-    return normalized_adj.astype(np.float32)
+    
+    def __init__(self, norm_strength: float = 1.0):
+        super().__init__("row_softmax", norm_strength)
+    
+    def normalize(self, matrix: np.ndarray) -> np.ndarray:
+        zero_mask = np.abs(matrix) < 1e-6
+        exp_adj = np.exp(matrix)
+        exp_adj[zero_mask] = 0
+        row_sums = exp_adj.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1
+        return (self.norm_strength * exp_adj / row_sums).astype(np.float32)
 
 
-def _normalize_softmax(
-    sparse_adj: np.ndarray,
-    norm_strength: float,
-    zero_mask: np.ndarray
-) -> np.ndarray:
+class GlobalSoftmaxNormalizer(Normalizer):
     """Global Softmax normalization."""
-    exp_adj = np.exp(sparse_adj)
-    exp_adj[zero_mask] = 0
-    global_sum = exp_adj.sum()
-    normalized_adj = norm_strength * exp_adj / global_sum
-    return normalized_adj.astype(np.float32)
+    
+    def __init__(self, norm_strength: float = 1.0):
+        super().__init__("global_softmax", norm_strength)
+    
+    def normalize(self, matrix: np.ndarray) -> np.ndarray:
+        zero_mask = np.abs(matrix) < 1e-6
+        exp_adj = np.exp(matrix)
+        exp_adj[zero_mask] = 0
+        global_sum = exp_adj.sum()
+        if global_sum == 0:
+            global_sum = 1
+        return (self.norm_strength * exp_adj / global_sum).astype(np.float32)
 
 
-def _normalize_row_minmax(
-    sparse_adj: np.ndarray,
-    N: int,
-    zero_mask: np.ndarray
-) -> np.ndarray:
+class RowMinMaxNormalizer(Normalizer):
     """Row-wise Min-Max normalization."""
-    normalized_adj = np.copy(sparse_adj)
     
-    for i in range(N):
-        row = sparse_adj[i, :]
-        row_min = row[row > 0].min() if np.any(row > 0) else 0
-        row_max = row.max()
-        
-        denominator = row_max - row_min
-        if denominator > 1e-6:
-            normalized_adj[i, :][~zero_mask[i, :]] = (
-                row[~zero_mask[i, :]] - row_min
-            ) / denominator
-        # else: keep as is if all values are the same
+    def __init__(self, norm_strength: float = 1.0):
+        super().__init__("row_minmax", norm_strength)
     
-    return normalized_adj.astype(np.float32)
+    def normalize(self, matrix: np.ndarray) -> np.ndarray:
+        N = matrix.shape[0]
+        normalized = np.copy(matrix)
+        for i in range(N):
+            row = matrix[i, :]
+            nz_row = row[np.abs(row) > 1e-6]
+            if nz_row.size > 0:
+                r_min, r_max = nz_row.min(), nz_row.max()
+                denom = r_max - r_min
+                if denom > 1e-6:
+                    mask = np.abs(row) > 1e-6
+                    normalized[i, mask] = (row[mask] - r_min) / denom
+        return normalized.astype(np.float32)
 
 
-def _normalize_minmax(
-    sparse_adj: np.ndarray,
-    zero_mask: np.ndarray
-) -> np.ndarray:
+class GlobalMinMaxNormalizer(Normalizer):
     """Global Min-Max normalization."""
-    global_min = sparse_adj[sparse_adj > 0].min() if np.any(sparse_adj > 0) else 0
-    global_max = sparse_adj.max()
-    denominator = global_max - global_min
     
-    normalized_adj = np.copy(sparse_adj)
-    if denominator > 1e-6:
-        # Apply normalization only to non-zero elements
-        normalized_adj[~zero_mask] = (
-            sparse_adj[~zero_mask] - global_min
-        ) / denominator
+    def __init__(self, norm_strength: float = 1.0):
+        super().__init__("global_minmax", norm_strength)
     
-    return normalized_adj.astype(np.float32)
+    def normalize(self, matrix: np.ndarray) -> np.ndarray:
+        nz_vals = matrix[np.abs(matrix) > 1e-6]
+        if nz_vals.size == 0:
+            return matrix.astype(np.float32)
+        
+        g_min, g_max = nz_vals.min(), nz_vals.max()
+        denom = g_max - g_min
+        if denom < 1e-6:
+            return matrix.astype(np.float32)
+        
+        normalized = np.copy(matrix)
+        mask = np.abs(matrix) > 1e-6
+        normalized[mask] = (matrix[mask] - g_min) / denom
+        return normalized.astype(np.float32)
+
+
+class BinaryNormalizer(Normalizer):
+    """Set non-zero edges to 1."""
+    
+    def __init__(self, norm_strength: float = 1.0):
+        super().__init__("binary", norm_strength)
+    
+    def normalize(self, matrix: np.ndarray) -> np.ndarray:
+        return (np.abs(matrix) > 1e-6).astype(np.float32)

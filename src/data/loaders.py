@@ -12,7 +12,6 @@ import json
 import pickle
 import numpy as np
 from typing import Tuple, Optional, Dict, Any, List
-from pathlib import Path
 
 
 # ------------------------------------------------------
@@ -196,24 +195,23 @@ def load_pkl(pickle_file: str) -> Any:
         raise
     return pickle_data
 
-def save_pkl(data_object: object, output_file: str): # I know this should not be here
+
+def save_pkl(data_object: object, output_file: str):
     """
     Saves a Python object to a pickle file.
 
     Args:
-        data_object (object): The object (e.g., np.ndarray, np.matrix, list) to be saved.
-        pickle_file (str): The destination path for the pickle file.
+        data_object: The object to be saved.
+        output_file: The destination path for the pickle file.
     """
     try:
-        # 'wb' mode opens the file for writing in binary mode
-        with open(output_file, 'w+b') as f:
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        with open(output_file, 'wb') as f:
             pickle.dump(data_object, f, protocol=pickle.HIGHEST_PROTOCOL)
         print(f"Object successfully saved to {output_file}")
-        
     except Exception as e:
         print(f'Error: Unable to save data to {output_file}: {e}')
         raise
-
 
 
 def load_adj(
@@ -224,20 +222,22 @@ def load_adj(
     Load and preprocess an adjacency matrix.
 
     Args:
-        file_path: Path to the file containing the adjacency matrix.
-        adj_type: Type of adjacency matrix preprocessing. 
-                  Options: 'scalap', 'normlap', 'symnadj', 'transition', 
-                          'doubletransition', 'identity', 'original'.
+        file_path: Path to the pkl file.
+        adj_type: Preprocessing type (original, scalap, normlap, symnadj, transition, doubletransition).
 
     Returns:
-        Tuple of (processed adjacency list, raw adjacency matrix)
-        - processed adjacency list: List of processed adjacency matrices
-        - raw adjacency matrix: Original adjacency matrix
-
-    Raises:
-        ValueError: If adj_type is not recognized.
+        Tuple of (processed list, raw matrix)
     """
-    # Import here to avoid circular dependency
+    try:
+        data = load_pkl(file_path)
+        if isinstance(data, (list, tuple)) and len(data) == 3:
+            adj_mx = data[2]
+        else:
+            adj_mx = data
+    except Exception as e:
+        print(f"Error reading adjacency from {file_path}: {e}")
+        raise
+
     from .preprocessing import (
         calculate_scaled_laplacian,
         calculate_symmetric_normalized_laplacian,
@@ -245,32 +245,20 @@ def load_adj(
         calculate_transition_matrix
     )
 
-    try:
-        _, _, adj_mx = load_pkl(file_path)
-    except ValueError:
-        adj_mx = load_pkl(file_path)
+    TRANSFORMS = {
+        'original': lambda x: [x],
+        'scalap': lambda x: [calculate_scaled_laplacian(x).astype(np.float32).todense()],
+        'normlap': lambda x: [calculate_symmetric_normalized_laplacian(x).astype(np.float32).todense()],
+        'symnadj': lambda x: [calculate_symmetric_message_passing_adj(x).astype(np.float32).todense()],
+        'transition': lambda x: [calculate_transition_matrix(x).T],
+        'doubletransition': lambda x: [calculate_transition_matrix(x).T, calculate_transition_matrix(x.T).T],
+        'identity': lambda x: [np.diag(np.ones(x.shape[0])).astype(np.float32)]
+    }
 
-    if adj_type == 'scalap':
-        adj = [calculate_scaled_laplacian(adj_mx).astype(np.float32).todense()]
-    elif adj_type == 'normlap':
-        adj = [calculate_symmetric_normalized_laplacian(
-            adj_mx).astype(np.float32).todense()]
-    elif adj_type == 'symnadj':
-        adj = [calculate_symmetric_message_passing_adj(
-            adj_mx).astype(np.float32).todense()]
-    elif adj_type == 'transition':
-        adj = [calculate_transition_matrix(adj_mx).T]
-    elif adj_type == 'doubletransition':
-        adj = [calculate_transition_matrix(
-            adj_mx).T, calculate_transition_matrix(adj_mx.T).T]
-    elif adj_type == 'identity':
-        adj = [np.diag(np.ones(adj_mx.shape[0])).astype(np.float32)]
-    elif adj_type == 'original':
-        adj = [adj_mx]
-    else:
-        raise ValueError(f'Undefined adjacency matrix type: {adj_type}')
+    if adj_type not in TRANSFORMS:
+        raise ValueError(f"Unknown adj_type: {adj_type}. Choices: {list(TRANSFORMS.keys())}")
 
-    return adj, adj_mx
+    return TRANSFORMS[adj_type](adj_mx), adj_mx
 
 
 # --------------------------------------------------
@@ -331,3 +319,69 @@ def load_dataset(
             print(f"Warning: Adjacency file not found at {adj_path}")
 
     return result
+
+
+def load_gaussian_data(
+    n_nodes: int = 10,
+    n_timesteps: int = 100,
+    n_features: int = 1,
+    seed: int = 42
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Generates synthetic Gaussian time series data.
+
+    Returns:
+        Tuple of (data, metadata)
+    """
+    np.random.seed(seed)
+    data = np.random.randn(n_timesteps, n_nodes, n_features).astype(np.float32)
+    metadata = {
+        'name': 'Gaussian Synthetic',
+        'shape': [n_timesteps, n_nodes, n_features],
+        'domain': 'Synthetic',
+        'has_graph': False
+    }
+    return data, metadata
+
+
+def load_sinusoidal_data(
+    n_nodes: int = 10,
+    n_timesteps: int = 200,
+    n_features: int = 1,
+    noise_level: float = 0.1,
+    seed: int = 42
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Generates synthetic sinusoidal data with some dependencies.
+    Node 1 is a delayed version of Node 0 (causality).
+    Node 2 is a non-linear transformation of Node 0.
+
+    Returns:
+        Tuple of (data, metadata)
+    """
+    np.random.seed(seed)
+    t = np.linspace(0, 10, n_timesteps)
+    data = np.zeros((n_timesteps, n_nodes, n_features), dtype=np.float32)
+
+    # Base signals
+    for i in range(n_nodes):
+        freq = 1.0 + 0.5 * np.random.rand()
+        phase = 2 * np.pi * np.random.rand()
+        data[:, i, 0] = np.sin(freq * t + phase)
+
+    # Inject dependencies for nodes 0, 1, 2 if they exist
+    if n_nodes >= 3:
+        data[:, 0, 0] = np.sin(t)
+        data[:, 1, 0] = np.sin(t - 0.5)  # Lagged (Granger causality)
+        data[:, 2, 0] = data[:, 0, 0]**2 # Non-linear dependency
+
+    data += np.random.normal(0, noise_level, data.shape)
+
+    metadata = {
+        'name': 'Sinusoidal Synthetic',
+        'shape': [n_timesteps, n_nodes, n_features],
+        'domain': 'Synthetic',
+        'has_graph': False,
+        'description': 'Node 1 lagged Node 0; Node 2 non-linear on Node 0'
+    }
+    return data, metadata
