@@ -1,0 +1,2 @@
+method,test_mae_h3_mean,test_mae_h3_std,test_rmse_h3_mean,test_rmse_h3_std,test_mape_h3_mean,test_mape_h3_std,test_mae_h6_mean,test_mae_h6_std,test_rmse_h6_mean,test_rmse_h6_std,test_mape_h6_mean,test_mape_h6_std,test_mae_h12_mean,test_mae_h12_std,test_rmse_h12_mean,test_rmse_h12_std,test_mape_h12_mean,test_mape_h12_std
+chronos-2-multivariate,3.0278156,0.0,4.796696,0.0,5.722503,0.0,2.532378,0.0,4.3608646,0.0,4.961964,0.0,2.5131388,0.0,4.66057,0.0,5.7054257,0.0
