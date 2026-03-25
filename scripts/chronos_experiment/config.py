@@ -3,7 +3,7 @@ YAML configuration loader for the Chronos experiment runner.
 """
 
 import yaml
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 
 DEFAULT_CONFIG = {
@@ -16,12 +16,15 @@ DEFAULT_CONFIG = {
     "window_strategy": "absolute",
     "modes": ["single_node", "whole_matrix", "adj_neighbour"],
     "adjacency_files": [],
+    "node_batches": None,        # List[List[int]] OR List[List[List[int]]]
+    "node_batches_files": [],    # List[str]
+    "batch_sizes": [],           # List[int]
     "test_ratio": None,  # None means read from desc.json
     "num_runs": 1,
     "output_dir": "../results/",
 }
 
-VALID_MODES = {"single_node", "whole_matrix", "adj_neighbour"}
+VALID_MODES = {"single_node", "whole_matrix", "adj_neighbour", "node_batches"}
 VALID_WINDOW_STRATEGIES = {"absolute", "divided"}
 
 
@@ -67,6 +70,16 @@ def build_config_from_args(args) -> Dict[str, Any]:
         config["num_runs"] = args.num_runs
     if args.output_dir:
         config["output_dir"] = args.output_dir
+    if args.node_batches:
+        config["node_batches"] = args.node_batches
+    if args.node_batches_file:
+        config["node_batches_files"] = [args.node_batches_file]
+    if args.node_batches_files:
+        config["node_batches_files"] = args.node_batches_files
+    if args.batch_size is not None:
+        config["batch_sizes"] = [args.batch_size]
+    if args.batch_sizes:
+        config["batch_sizes"] = args.batch_sizes
 
     _validate_config(config)
     return config
