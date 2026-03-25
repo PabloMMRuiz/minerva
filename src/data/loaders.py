@@ -295,7 +295,7 @@ def load_dataset(
 
     if verbose and metadata is not None:
         print_dataset_description(folder_path)
-
+    print("CWD:", os.getcwd())
     # Load time series data
     data, success = load_dataset_as_memmap(folder_path)
     if success:

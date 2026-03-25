@@ -4,8 +4,8 @@ Correlation-based matrix generation methods.
 
 import numpy as np
 from typing import Dict, Optional, Any
-from matrix_generation.base import MatrixGenerator
-from data.preprocessing import reshape_time_series_2_d
+from .base import MatrixGenerator
+from src.data.preprocessing import reshape_time_series_2_d
 
 
 class PearsonCorrelationGenerator(MatrixGenerator):

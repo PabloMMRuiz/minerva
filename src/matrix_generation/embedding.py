@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from typing import Dict, Optional, Any
 from .base import MatrixGenerator
-from data.preprocessing import reshape_time_series_2_d
+from src.data.preprocessing import reshape_time_series_2_d
 
 
 class DilatedCNNEncoder(nn.Module):

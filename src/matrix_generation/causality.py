@@ -6,7 +6,7 @@ import numpy as np
 from typing import Dict, Optional, Any
 from statsmodels.tsa.stattools import grangercausalitytests
 from .base import MatrixGenerator
-from data.preprocessing import reshape_time_series_2_d
+from src.data.preprocessing import reshape_time_series_2_d
 
 
 class GrangerCausalityGenerator(MatrixGenerator):

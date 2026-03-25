@@ -5,7 +5,7 @@ Unified pipeline for adjacency matrix construction.
 import numpy as np
 from typing import List, Optional, Union, Dict, Any
 from .base import Sparsifier, Normalizer
-from sparcification.masks import (
+from .masks import (
     TopKRowSparsifier,
     GlobalTopESparsifier,
     DegreeRegularizedGreedySparsifier,
@@ -18,7 +18,7 @@ from sparcification.masks import (
     MSTSparsifier,
     PMFGSparsifier
 )
-from sparcification.normalization import (
+from .normalization import (
     RowL1Normalizer,
     RowSoftmaxNormalizer,
     GlobalSoftmaxNormalizer,

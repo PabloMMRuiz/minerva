@@ -5,7 +5,7 @@ Dynamic Time Warping (DTW) matrix generator.
 import numpy as np
 from typing import Dict, Optional, Any
 from .base import MatrixGenerator
-from data.preprocessing import reshape_time_series_2_d
+from src.data.preprocessing import reshape_time_series_2_d
 
 import numpy as np
 from numba import njit, prange
