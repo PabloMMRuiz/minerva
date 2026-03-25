@@ -10,7 +10,7 @@ Three modes:
 import numpy as np
 import torch
 from tqdm import tqdm
-from typing import Optional
+from typing import Optional, List
 
 
 def _extract_median_prediction(forecast_tensor: torch.Tensor) -> np.ndarray:
@@ -181,6 +181,58 @@ def predict_adj_neighbour(
     return predictions
 
 
+def predict_node_batches(
+    data_mm: np.ndarray,
+    pipeline,
+    context_start: int,
+    context_len: int,
+    prediction_length: int,
+    num_nodes: int,
+    batches: List[List[int]],
+    progress: bool = True,
+) -> np.ndarray:
+    """
+    Predict nodes in batches (parallel multivariate forecasting).
+
+    Args:
+        data_mm: Full dataset memmap, shape [T, N, F].
+        pipeline: Chronos2Pipeline instance.
+        context_start: Index of the first context timestep.
+        context_len: Number of context timesteps.
+        prediction_length: Number of steps to predict.
+        num_nodes: Total number of nodes.
+        batches: List of lists of node indices.
+        progress: Show progress bar.
+
+    Returns:
+        Predictions array of shape [num_nodes, prediction_length].
+    """
+    predictions = np.zeros((num_nodes, prediction_length), dtype=np.float32)
+    iterator = batches
+    if progress:
+        iterator = tqdm(iterator, desc="Node-batch prediction", leave=False)
+
+    for batch in iterator:
+        if not batch:
+            continue
+            
+        # Context: [len(batch), T]
+        context_slice = data_mm[context_start:context_start + context_len, batch, 0].T
+        context = torch.tensor(context_slice, dtype=torch.float32).unsqueeze(0)
+        # context shape: [1, len(batch), T]
+
+        with torch.no_grad():
+            forecast = pipeline.predict(context, prediction_length=prediction_length)
+
+        pred = _extract_median_prediction(forecast)
+        # pred shape: [len(batch), prediction_length]
+        
+        for i, node_idx in enumerate(batch):
+            predictions[node_idx, :] = pred[i, :prediction_length]
+
+    return predictions
+
+
 def get_avg_neighbours_count(adj_mx: np.ndarray) -> float:
     """
     Compute the average number of variates per node in adj_neighbour mode.
@@ -204,6 +256,7 @@ def compute_effective_context_length(
     mode: str,
     num_nodes: int,
     adj_mx: Optional[np.ndarray] = None,
+    batches: Optional[List[List[int]]] = None,
 ) -> int:
     """
     Compute the effective context length given window strategy and mode.
@@ -211,9 +264,10 @@ def compute_effective_context_length(
     Args:
         base_context_length: The configured context length.
         window_strategy: 'absolute' or 'divided'.
-        mode: 'single_node', 'whole_matrix', or 'adj_neighbour'.
+        mode: 'single_node', 'whole_matrix', 'adj_neighbour', or 'node_batches'.
         num_nodes: Total number of nodes.
         adj_mx: Adjacency matrix (needed for adj_neighbour divided mode).
+        batches: List of node batches (needed for node_batches divided mode).
 
     Returns:
         Effective context length (int, >= 1).
@@ -230,6 +284,12 @@ def compute_effective_context_length(
         if adj_mx is not None:
             avg_vars = get_avg_neighbours_count(adj_mx)
             return max(1, int(base_context_length / avg_vars))
+        else:
+            return base_context_length
+    elif mode == "node_batches":
+        if batches:
+            avg_batch_size = np.mean([len(b) for b in batches if b])
+            return max(1, int(base_context_length / avg_batch_size))
         else:
             return base_context_length
     else:

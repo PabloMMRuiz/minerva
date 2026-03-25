@@ -10,14 +10,16 @@ import sys
 import time
 import numpy as np
 import torch
+from tqdm import tqdm
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
-from .metrics import calculate_metrics, calculate_per_horizon_step_metrics
+from .metrics import calculate_metrics
 from .modes import (
     predict_single_node,
     predict_whole_matrix,
     predict_adj_neighbour,
+    predict_node_batches,
     compute_effective_context_length,
 )
 from .storage import (
@@ -158,116 +160,168 @@ def run_experiment(config: Dict[str, Any]) -> str:
     print("\n[4/4] Running experiments...")
     summary_rows = []
 
+    # Progress bar for all combinations of modes and runs
+    def get_comb_count(m):
+        if m == "adj_neighbour":
+            return len(adj_matrices)
+        return 1
+        
+    total_combinations = sum([get_comb_count(m) for m in modes]) * num_runs
+    pbar_outer = tqdm(total=total_combinations, desc="Total Progress")
+
     for mode in modes:
-        print(f"\n{'='*40}")
-        print(f"Mode: {mode}")
-        print(f"{'='*40}")
-
-        # Determine adjacency matrices to iterate over for adj_neighbour mode
+        # Determine items to iterate over for this mode
         if mode == "adj_neighbour":
-            adj_items = list(adj_matrices.items())
+            mode_items = list(adj_matrices.items())
+        elif mode == "node_batches":
+            mode_items = []
+            
+            # 1. Explicit batches from config
+            explicit = config.get("node_batches")
+            if explicit:
+                # Check if it's List[List[int]] (one set) or List[List[List[int]]] (multiple sets)
+                # We assume if the first element is a list, and its first element is also a list, it's multiple sets.
+                # Actually, explicit node_batches is always List[List[int]] for ONE set.
+                # If we have multiple, it's List[List[List[int]]].
+                if isinstance(explicit[0][0], int):
+                    mode_items.append(("batches_0", explicit))
+                else:
+                    for i, b_set in enumerate(explicit):
+                        mode_items.append((f"batches_{i}", b_set))
+            
+            # 2. From JSON files
+            for fpath in config.get("node_batches_files", []):
+                import json
+                try:
+                    with open(fpath, "r") as f:
+                        loaded = json.load(f)
+                        mode_items.append((os.path.basename(fpath), loaded))
+                except Exception as e:
+                    print(f"Warning: Failed to load node_batches_file {fpath}: {e}")
+            
+            # 3. From automatic sizes
+            for size in config.get("batch_sizes", []):
+                batches = [list(range(i, min(i + size, num_nodes))) for i in range(0, num_nodes, size)]
+                mode_items.append((f"size_{size}", batches))
+            
+            if not mode_items:
+                # Fallback to whole matrix
+                mode_items.append(("batches_default", [list(range(num_nodes))]))
+                print("  Warning: No batching info for node_batches mode. Falling back to default batch.")
+            
+            print(f"  Initialized {len(mode_items)} batch configurations for node_batches mode.")
         else:
-            adj_items = [(None, None)]
+            mode_items = [(None, None)]
 
-        for adj_name, adj_mx in adj_items:
-            if adj_name:
-                print(f"\n  Adjacency: {adj_name}")
-
+        for item_name, item_data in mode_items:
+            mode_display = f"{mode} ({item_name})" if item_name else mode
+            
             # Compute effective context length
             eff_ctx = compute_effective_context_length(
-                base_context_length, window_strategy, mode, num_nodes, adj_mx
+                base_context_length, 
+                window_strategy, 
+                mode, 
+                num_nodes, 
+                adj_mx=item_data if mode == "adj_neighbour" else None,
+                batches=item_data if mode == "node_batches" else None
             )
-            print(f"  Effective context length: {eff_ctx}")
 
             for run_idx in range(num_runs):
-                if num_runs > 1:
-                    print(f"\n  >>> Run {run_idx + 1}/{num_runs}")
+                suffix = f" (Run {run_idx+1})" if num_runs > 1 else ""
+                
+                # We initialize storage for ALL horizons in this run
+                # dict of lists: horizon -> List[np.ndarray]
+                run_predictions = {h: [] for h in horizons}
+                run_ground_truth = {h: [] for h in horizons}
+                run_step_metrics = {h: [] for h in horizons}
+                
+                start_time = time.time()
+                
+                # Eval index loop - predict ONCE for max_horizon
+                pbar_inner = tqdm(eval_indices, desc=f"Mode: {mode_display}{suffix}", leave=False)
+                for idx in pbar_inner:
+                    context_start = idx - eff_ctx
+                    if context_start < 0:
+                        continue
 
-                run_start_time = time.time()
-
-                # Per-horizon results
-                for horizon in horizons:
-                    print(f"\n  Horizon: {horizon}")
-                    h_start_time = time.time()
-
-                    predictions_list = []
-                    ground_truth_list = []
-                    per_step_metrics_list = []
-
-                    for idx in eval_indices:
-                        context_start = idx - eff_ctx
-                        if context_start < 0:
-                            continue
-
-                        # Ground truth: [N, H]
-                        gt = data[idx:idx + horizon, :, 0].T
-
-                        # Run prediction
-                        if mode == "single_node":
-                            preds = predict_single_node(
-                                data, pipeline, context_start, eff_ctx,
-                                horizon, num_nodes, progress=False,
-                            )
-                        elif mode == "whole_matrix":
-                            preds = predict_whole_matrix(
-                                data, pipeline, context_start, eff_ctx,
-                                horizon, num_nodes, progress=False,
-                            )
-                        elif mode == "adj_neighbour":
-                            preds = predict_adj_neighbour(
-                                data, pipeline, context_start, eff_ctx,
-                                horizon, num_nodes, adj_mx, progress=False,
-                            )
-                        else:
-                            raise ValueError(f"Unknown mode: {mode}")
-
-                        # Compute per-step metrics
-                        step_metrics = calculate_metrics(gt, preds)
-                        per_step_metrics_list.append(step_metrics)
-                        predictions_list.append(preds)
-                        ground_truth_list.append(gt)
-
-                    h_duration = time.time() - h_start_time
-
-                    # Aggregate metrics for this horizon
-                    if per_step_metrics_list:
-                        agg_metrics = {
-                            k: float(np.mean([m[k] for m in per_step_metrics_list]))
-                            for k in ["mae", "rmse", "mse", "mape"]
-                        }
+                    # Predict max_horizon
+                    if mode == "single_node":
+                        preds_full = predict_single_node(
+                            data, pipeline, context_start, eff_ctx,
+                            max_horizon, num_nodes, progress=False,
+                        )
+                    elif mode == "whole_matrix":
+                        preds_full = predict_whole_matrix(
+                            data, pipeline, context_start, eff_ctx,
+                            max_horizon, num_nodes, progress=False,
+                        )
+                    elif mode == "adj_neighbour":
+                        preds_full = predict_adj_neighbour(
+                            data, pipeline, context_start, eff_ctx,
+                            max_horizon, num_nodes, item_data, progress=False,
+                        )
+                    elif mode == "node_batches":
+                        preds_full = predict_node_batches(
+                            data, pipeline, context_start, eff_ctx,
+                            max_horizon, num_nodes, item_data, progress=False,
+                        )
                     else:
-                        agg_metrics = {"mae": 0, "rmse": 0, "mse": 0, "mape": 0}
+                        raise ValueError(f"Unknown mode: {mode}")
 
-                    print(f"    MAE: {agg_metrics['mae']:.4f}  "
-                          f"RMSE: {agg_metrics['rmse']:.4f}  "
-                          f"MAPE: {agg_metrics['mape']:.2f}%  "
-                          f"Time: {h_duration:.1f}s")
+                    # Distribute slices to each horizon
+                    for h in horizons:
+                        preds_h = preds_full[:, :h]
+                        gt_h = data[idx:idx + h, :, 0].T
+                        
+                        run_predictions[h].append(preds_h)
+                        run_ground_truth[h].append(gt_h)
+                        run_step_metrics[h].append(calculate_metrics(gt_h, preds_h))
 
+                total_run_duration = time.time() - start_time
+                
+                # Consolidate and save for each horizon
+                for h in horizons:
+                    h_preds = run_predictions[h]
+                    h_gts = run_ground_truth[h]
+                    h_metrics = run_step_metrics[h]
+                    
+                    if not h_preds:
+                        continue
+                        
+                    # Aggregate results
+                    agg_metrics = {
+                        k: float(np.mean([m[k] for m in h_metrics]))
+                        for k in ["mae", "rmse", "mse", "mape"]
+                    }
+                    
                     # Save step data
-                    mode_label = f"{mode}_{adj_name}" if adj_name else mode
+                    mode_label = f"{mode}_{item_name}" if item_name else mode
                     save_step_data(
-                        run_dir, mode_label, horizon, window_strategy,
-                        predictions_list, ground_truth_list,
-                        per_step_metrics_list, eff_ctx,
+                        run_dir, mode_label, h, window_strategy,
+                        h_preds, h_gts, h_metrics, eff_ctx,
                     )
 
                     # Add summary row
                     summary_rows.append({
                         "dataset": dataset_name,
                         "mode": mode,
-                        "adjacency": adj_name or "",
+                        "config_name": item_name or "",
                         "window_strategy": window_strategy,
                         "context_length": eff_ctx,
-                        "horizon": horizon,
+                        "horizon": h,
                         "run": run_idx + 1,
                         "num_nodes": num_nodes,
-                        "num_eval_windows": len(per_step_metrics_list),
+                        "num_eval_windows": len(h_metrics),
                         "mae": agg_metrics["mae"],
                         "rmse": agg_metrics["rmse"],
                         "mse": agg_metrics["mse"],
                         "mape": agg_metrics["mape"],
-                        "time_sec": h_duration,
+                        "time_sec": total_run_duration / len(horizons), # proportional time
                     })
+
+                pbar_outer.update(1)
+
+    pbar_outer.close()
 
     # Save summary
     csv_path = save_summary_csv(run_dir, summary_rows)

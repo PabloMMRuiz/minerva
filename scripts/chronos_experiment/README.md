@@ -24,10 +24,22 @@ python -m scripts.chronos_experiment.cli \
 
 # Only whole_matrix with divided window strategy
 python -m scripts.chronos_experiment.cli \
-    --dataset ../data/PEMS-BAY/ \
+    --dataset data/PEMS-BAY/ \
     --modes whole_matrix \
     --window-strategy divided \
     --context-length 288
+
+# Node batches (automatic)
+python -m scripts.chronos_experiment.cli \
+    --dataset data/PEMS-BAY/ \
+    --modes node_batches \
+    --batch-size 50
+
+# Node batches (explicit string)
+python -m scripts.chronos_experiment.cli \
+    --dataset data/PEMS-BAY/ \
+    --modes node_batches \
+    --node-batches "0,1,2|3,4,5"
 
 # Minimal run
 python -m scripts.chronos_experiment.cli \
@@ -43,6 +55,7 @@ python -m scripts.chronos_experiment.cli \
 | `single_node` | Predict each node independently as a univariate series |
 | `whole_matrix` | Predict all nodes simultaneously as variates of one multivariate series |
 | `adj_neighbour` | For each node, feed it plus its adjacency neighbours as variates |
+| `node_batches` | Predict nodes in partitioned batches (parallel multivariate) |
 
 ## Window Strategies
 
@@ -90,8 +103,14 @@ dtype: "bfloat16"                      # "bfloat16", "float16", or "float32"
 horizons: [3, 6, 12]                   # Prediction horizons
 context_length: 288                    # Context window size
 window_strategy: "absolute"            # "absolute" or "divided"
-modes: ["single_node", "whole_matrix", "adj_neighbour"]
-adjacency_files: ["../data/PEMS-BAY/adj_mx.pkl"]  # For adj_neighbour mode
+modes: ["single_node", "node_batches"] # Modes to run
+adjacency_files: ["data/PEMS-BAY/adj_mx.pkl"]
+
+# Batch options (for node_batches mode)
+node_batches: [[0,1,2], [3,4,5]]       # Explicit batches
+# node_batches_file: "batches.json"    # Or path to JSON file
+# batch_size: 50                       # Or auto-partition size
+
 test_ratio: null                       # null = read from desc.json
 num_runs: 1                            # Number of repeated runs
 output_dir: "../results/"              # Output directory

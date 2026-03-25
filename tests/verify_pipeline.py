@@ -47,6 +47,16 @@ from utils.visualization import (
     plot_matrix_spy,
     plot_node_neighborhood
 )
+from batching.algorithms import (
+    KHopBatcher,
+    GreedyClusterBatcher,
+    LouvainBatcher,
+    StandardClusterBatcher,
+    SpectralBatcher,
+    BalancedPartitionBatcher,
+    OverlappingBatcher,
+    DegreeAwareBatcher
+)
 
 
 def verify_generators():
@@ -146,6 +156,35 @@ def verify_utilities(matrices):
     plot_node_neighborhood(adj, node_idx=0, show=False)
     print("OK")
 
+def verify_batchers(adj):
+    print("\n" + "=" * 60)
+    print("BATCHERS")
+    print("=" * 60)
+    
+    batchers = [
+        ("KHopBatcher", KHopBatcher(k=2, max_batch_size=3)),
+        ("GreedyClusterBatcher", GreedyClusterBatcher(max_batch_size=3)),
+        ("LouvainBatcher", LouvainBatcher()),
+        ("StandardClusterBatcher", StandardClusterBatcher(n_clusters=2)),
+        ("SpectralBatcher", SpectralBatcher(n_clusters=2)),
+        ("BalancedPartitionBatcher", BalancedPartitionBatcher(n_clusters=2)),
+        ("OverlappingBatcher", OverlappingBatcher(seed_fraction=0.5, radius=1)),
+        ("DegreeAwareBatcher", DegreeAwareBatcher(base_size=5, scale_factor=0.5))
+    ]
+    
+    for name, batcher in batchers:
+        print(f"  {name}...", end=" ")
+        batches = batcher.batch(adj)
+        
+        # Check that it returns a list of lists
+        assert isinstance(batches, list), f"{name} returned {type(batches)}"
+        if name != "OverlappingBatcher":
+            # For partitioning, check that all nodes are covered
+            nodes_in_batches = sum([len(b) for b in batches])
+            assert nodes_in_batches == adj.shape[0], f"{name}: expected {adj.shape[0]} nodes, got {nodes_in_batches}"
+        
+        print(f"OK ({len(batches)} batches)")
+
 
 def main():
     print("Starting comprehensive verification...\n")
@@ -153,6 +192,7 @@ def main():
     verify_sparsifiers(list(matrices.values())[0])
     verify_hybrid_fusers(matrices)
     verify_utilities(matrices)
+    verify_batchers(list(matrices.values())[0])
     print("\n" + "=" * 60)
     print("ALL CHECKS PASSED")
     print("=" * 60)

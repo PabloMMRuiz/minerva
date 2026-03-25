@@ -24,6 +24,7 @@ Usage:
 import argparse
 import sys
 
+import json
 from .config import load_config, build_config_from_args
 from .runner import run_experiment
 
@@ -54,11 +55,11 @@ Examples:
       --window-strategy divided \\
       --context-length 288
 
-  # Minimal run:
+  # Run node batches (manual partition)
   python -m scripts.chronos_experiment.cli \\
-      --dataset ../data/PEMS-BAY/ \\
-      --modes whole_matrix \\
-      --horizons 3
+      --dataset data/PEMS-BAY/ \\
+      --modes node_batches \\
+      --node-batches "0,1,2|3,4,5"
         """,
     )
 
@@ -112,7 +113,7 @@ Examples:
         type=str,
         nargs="+",
         default=None,
-        choices=["single_node", "whole_matrix", "adj_neighbour"],
+        choices=["single_node", "whole_matrix", "adj_neighbour", "node_batches"],
         help="Prediction modes to run.",
     )
     parser.add_argument(
@@ -140,6 +141,26 @@ Examples:
         default=None,
         help="Output directory for results (default: ../results/).",
     )
+    parser.add_argument(
+        "--node-batches",
+        type=str,
+        default=None,
+        help="Explicit node batches. Use '|' to separate batches and ';' to separate sets: '0,1|2;3,4|5'.",
+    )
+    parser.add_argument(
+        "--node-batches-files",
+        type=str,
+        nargs="+",
+        default=None,
+        help="One or more JSON files containing node batches (list of lists).",
+    )
+    parser.add_argument(
+        "--batch-sizes",
+        type=int,
+        nargs="+",
+        default=None,
+        help="One or more sizes for automatic node partitioning.",
+    )
 
     args = parser.parse_args()
 
@@ -152,7 +173,40 @@ Examples:
             parser.error("--dataset is required when not using --config")
         if not args.modes:
             parser.error("--modes is required when not using --config")
+        
+        # Parse node batches if provided as string
+        if args.node_batches:
+            try:
+                # Support multiple sets separated by ';'
+                sets_str = args.node_batches.split(';')
+                all_sets = []
+                for s in sets_str:
+                    batches_str = s.strip().split('|')
+                    all_sets.append([[int(i) for i in b.split(',')] for b in batches_str])
+                # If only one set, we keep it as is (list of lists) but runner can handle list of sets
+                args.node_batches = all_sets
+            except Exception as e:
+                parser.error(f"Invalid format for --node-batches: {e}")
+        
+        # Load node batches files if provided
+        if args.node_batches_files:
+            args.node_batches_files_data = []
+            for fpath in args.node_batches_files:
+                try:
+                    with open(fpath, 'r') as f:
+                        args.node_batches_files_data.append(json.load(f))
+                except Exception as e:
+                    parser.error(f"Failed to load --node-batches-files {fpath}: {e}")
+
         config = build_config_from_args(args)
+        
+        # transfer loaded file data to config if present
+        if hasattr(args, 'node_batches_files_data'):
+            # Combine with existing explicit batches
+            if config.get('node_batches') is None:
+                config['node_batches'] = args.node_batches_files_data
+            else:
+                config['node_batches'].extend(args.node_batches_files_data)
 
     # Run the experiment
     try:
