@@ -1,0 +1,42 @@
+# Full Chronos experiment config for PEMS-BAY
+# =============================================
+# Run with:
+#   python -m scripts.chronos_experiment.cli --config scripts/chronos_experiment/sample_config.yaml
+
+dataset: "data/PEMS-BAY/"
+model: "amazon/chronos-2"
+device: "cuda"
+dtype: "bfloat16"
+
+# Prediction horizons to evaluate
+horizons: [3, 6, 12]
+
+# Context window size (number of timesteps given to the model)
+context_length: 288
+
+# Window strategy:
+#   "absolute" — fixed window for all modes
+#   "divided"  — budget is divided by number of series used in each mode
+window_strategy: "absolute"
+
+# Prediction modes to run:
+#   "single_node"   — predict each node independently (univariate)
+#   "whole_matrix"  — predict all nodes at once (multivariate)
+#   "adj_neighbour" — use adjacency neighbours for each node
+modes:
+  - single_node
+  - whole_matrix
+  - adj_neighbour
+
+# Adjacency matrix files (required for adj_neighbour mode)
+adjacency_files:
+  - "data/PEMS-BAY/adj_mx.pkl"
+
+# Fraction of data to use as test set (null = read from desc.json)
+test_ratio: null
+
+# Number of repeated runs (useful for averaging stochastic outputs)
+num_runs: 1
+
+# Output directory for results
+output_dir: "../results/"

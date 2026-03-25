@@ -1,0 +1,12 @@
+# Minimal Chronos experiment config
+# ===================================
+# Only specifies the required fields; everything else uses defaults.
+# Run with:
+#   python -m scripts.chronos_experiment.cli --config scripts/chronos_experiment/sample_config_minimal.yaml
+
+dataset: "../data/PEMS-BAY/"
+
+modes:
+  - whole_matrix
+
+# context_length defaults to 12, horizons default to [3, 6, 12]

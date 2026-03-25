@@ -28,7 +28,6 @@ def load_dataset_description(folder_path: str) -> Optional[Dict[str, Any]]:
         Dictionary containing dataset metadata, or None if loading fails.
     """
     json_path = os.path.join(folder_path, 'desc.json')
-
     if not os.path.exists(json_path):
         print(f"Error: desc.json not found in the folder '{folder_path}'")
         return None
