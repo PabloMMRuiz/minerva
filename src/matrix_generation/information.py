@@ -10,83 +10,73 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 from scipy.special import digamma
 from joblib import Parallel, delayed
+import numpy as np
+from scipy.special import digamma
+from sklearn.neighbors import NearestNeighbors
+from sklearn.feature_selection import mutual_info_regression
+from joblib import Parallel, delayed
+from typing import Optional, Dict, Any
+
+import numpy as np
+from scipy.special import digamma
+from sklearn.neighbors import NearestNeighbors
+from sklearn.feature_selection import mutual_info_regression
+from joblib import Parallel, delayed
+from tqdm import tqdm
+from typing import Optional, Dict, Any
+
+# =====================================================================
+# CORE ESTIMATOR: Vectorized Binary Search (Solution 2)
+# =====================================================================
 
 
-def _compute_mi_pair(xi, xj, k):
-    """
-    Kraskov MI estimator for two 1D variables.
-    """
+def _compute_mi_pair_vectorized(xi: np.ndarray, xj: np.ndarray, k: int) -> float:
     M = xi.shape[0]
-
-    # Joint space
     xy = np.column_stack((xi, xj))
 
-    # kNN in joint space (Chebyshev metric is standard here)
+    # Joint space kNN
     nn = NearestNeighbors(metric="chebyshev", n_neighbors=k + 1)
     nn.fit(xy)
     distances, _ = nn.kneighbors(xy)
+    eps = distances[:, k]
 
-    eps = distances[:, k]  # distance to k-th neighbor
+    # Binary search counting in marginals O(M log M)
+    xi_sorted = np.sort(xi)
+    xj_sorted = np.sort(xj)
 
-    # Count neighbors in marginal spaces
-    nx = np.array([
-        np.sum(np.abs(xi - xi[i]) < eps[i]) - 1
-        for i in range(M)
-    ])
-    ny = np.array([
-        np.sum(np.abs(xj - xj[i]) < eps[i]) - 1
-        for i in range(M)
-    ])
+    nx = np.searchsorted(xi_sorted, xi + eps, side='left') - \
+        np.searchsorted(xi_sorted, xi - eps, side='right') - 1
+    ny = np.searchsorted(xj_sorted, xj + eps, side='left') - \
+        np.searchsorted(xj_sorted, xj - eps, side='right') - 1
 
-    return (
-        digamma(k)
-        + digamma(M)
-        - np.mean(digamma(nx + 1) + digamma(ny + 1))
-    )
+    nx = np.maximum(nx, 0)
+    ny = np.maximum(ny, 0)
+
+    return float(digamma(k) + digamma(M) - np.mean(digamma(nx + 1) + digamma(ny + 1)))
+
+# =====================================================================
+# PARALLEL HELPERS
+# =====================================================================
 
 
-def _compute_row(x, i, k):
-    """
-    Compute MI between variable i and all others.
-    """
-    xi = x[:, i]
+def _compute_row_custom(x: np.ndarray, i: int, k: int):
     N = x.shape[1]
+    xi = x[:, i]
     row = np.zeros(N, dtype=np.float32)
-
-    for j in range(i, N):
-        if i == j:
-            continue
-        xj = x[:, j]
-        mi = _compute_mi_pair(xi, xj, k)
-        row[j] = mi
-
+    # Only compute upper triangle
+    for j in range(i + 1, N):
+        row[j] = _compute_mi_pair_vectorized(xi, x[:, j], k)
     return i, row
 
 
-def fast_kraskov_mi_matrix(x, k=3, n_jobs=-1, symmetric=True):
-    """
-    x: shape [M, N]
-    returns: [N, N] MI matrix
-    """
-    M, N = x.shape
-    mi_matrix = np.zeros((N, N), dtype=np.float32)
+def _compute_row_sklearn(x: np.ndarray, i: int, k: int):
+    target = x[:, i]
+    # sklearn calculates MI for node i vs all others in one go (very fast)
+    return i, mutual_info_regression(x, target, n_neighbors=k, n_jobs=1)
 
-    results = Parallel(n_jobs=n_jobs, prefer="threads")(
-        delayed(_compute_row)(x, i, k) for i in range(N)
-    )
-
-    for i, row in results:
-        mi_matrix[i, :] = row
-
-    # Symmetrize
-    if symmetric:
-        mi_matrix = mi_matrix + mi_matrix.T
-
-    # Fill diagonal
-    max_val = mi_matrix.max() if mi_matrix.size > 0 else 1.0
-    np.fill_diagonal(mi_matrix, max_val)
-
-    return mi_matrix
+# =====================================================================
+# THE GENERATOR CLASS
+# =====================================================================
 
 
 class MutualInformationGenerator(MatrixGenerator):
@@ -96,6 +86,7 @@ class MutualInformationGenerator(MatrixGenerator):
         feature_index: int = 0,
         n_jobs: int = -1,
         symmetric: bool = True,
+        use_custom_backend: bool = False,
         params: Optional[Dict[str, Any]] = None,
     ):
         super().__init__("mutual_information", params)
@@ -103,39 +94,38 @@ class MutualInformationGenerator(MatrixGenerator):
         self.feature_index = feature_index
         self.n_jobs = n_jobs
         self.symmetric = symmetric
-
-    def _compute_row(self, x: np.ndarray, i: int) -> np.ndarray:
-        target = x[:, i]
-        return mutual_info_regression(
-            x,
-            target,
-            n_neighbors=self.n_neighbors,
-            n_jobs=1,  # avoid nested parallelism
-        )
+        self.use_custom_backend = use_custom_backend
 
     def generate(self, data: np.ndarray) -> np.ndarray:
         """
-        Input: [L, N, C]
+        Input: [L, N, C] -> Output: [N, N]
         """
         x = reshape_time_series_2_d(data, self.feature_index)
-        print('AAAAAAAAAAAAAAAAAA')
-        return fast_kraskov_mi_matrix(
-            x,
-            k=self.n_neighbors,
-            n_jobs=-1
+        M, N = x.shape
+        mi_matrix = np.zeros((N, N), dtype=np.float32)
+
+        # Select backend
+        task_func = _compute_row_custom if self.use_custom_backend else _compute_row_sklearn
+
+        print(
+            f"Calculating MI Matrix ({N}x{N}) using {'Custom' if self.use_custom_backend else 'Sklearn'} backend...")
+
+        # Parallel execution with Progress Bar
+        results = Parallel(n_jobs=self.n_jobs, prefer="threads")(
+            delayed(task_func)(x, i, self.n_neighbors)
+            for i in tqdm(range(N), desc="Processing Nodes")
         )
-        L, N = x.shape
 
-        # Parallel over targets
-        rows = Parallel(n_jobs=self.n_jobs, prefer="threads")(
-            delayed(self._compute_row)(x, i) for i in range(N)
-        )
+        for i, row in results:
+            mi_matrix[i, :] = row
 
-        mi_matrix = np.vstack(rows).astype(np.float32)
-
-        # Optional: enforce symmetry (MI should be symmetric but estimator noise breaks it)
         if self.symmetric:
-            mi_matrix = 0.5 * (mi_matrix + mi_matrix.T)
+            # For sklearn, we average. For custom, we just add the transpose
+            # because we only computed the upper triangle.
+            if self.use_custom_backend:
+                mi_matrix = mi_matrix + mi_matrix.T
+            else:
+                mi_matrix = (mi_matrix + mi_matrix.T) / 2.0
 
         # Fill diagonal
         max_val = mi_matrix.max() if mi_matrix.size > 0 else 1.0
