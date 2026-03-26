@@ -1,0 +1,35 @@
+adjacency_files:
+- scripts\traffic_experiment\matrices\pems04_pearson.pkl
+- scripts\traffic_experiment\matrices\pems04_mi.pkl
+- scripts\traffic_experiment\matrices\pems04_fused.pkl
+- scripts\traffic_experiment\matrices\pems04_original.pkl
+context_length: 288
+dataset: data/PEMS04/
+device: cuda
+dtype: bfloat16
+horizons:
+- 3
+- 6
+- 12
+model: amazon/chronos-2
+modes:
+- single_node
+- whole_matrix
+- adj_neighbour
+- node_batches
+node_batches_files:
+- scripts\traffic_experiment\batches\pems04_pearson_louvain.json
+- scripts\traffic_experiment\batches\pems04_pearson_khop.json
+- scripts\traffic_experiment\batches\pems04_pearson_spectral.json
+- scripts\traffic_experiment\batches\pems04_mi_louvain.json
+- scripts\traffic_experiment\batches\pems04_mi_khop.json
+- scripts\traffic_experiment\batches\pems04_mi_spectral.json
+- scripts\traffic_experiment\batches\pems04_fused_louvain.json
+- scripts\traffic_experiment\batches\pems04_fused_khop.json
+- scripts\traffic_experiment\batches\pems04_fused_spectral.json
+- scripts\traffic_experiment\batches\pems04_original_louvain.json
+- scripts\traffic_experiment\batches\pems04_original_khop.json
+- scripts\traffic_experiment\batches\pems04_original_spectral.json
+num_runs: 1
+output_dir: results/
+window_strategy: absolute

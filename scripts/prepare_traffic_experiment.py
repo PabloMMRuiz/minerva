@@ -1,9 +1,8 @@
 import os
 import sys
 import json
-import pickle
-import numpy as np
 import yaml
+import numpy as np
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -53,15 +52,15 @@ def prepare_experiment(dataset_name, dataset_path):
         normalizers=[RowL1Normalizer()]
     )
     
-    adj_pearson = pipeline.run(m_pearson)
-    adj_mi = pipeline.run(m_mi)
-    adj_fused = pipeline.run(m_fused)
+    adj_pearson = pipeline.run(m_pearson, k=5*325)
+    adj_mi = pipeline.run(m_mi, k=5*325)
+    adj_fused = pipeline.run(m_fused, k=5*325)
     
     # Process original if it exists
     if adj_original is not None:
         # The original might already be sparse/normalized, but let's ensure it fits our pipeline expectations
         # if it's not already.
-        adj_original_proc = pipeline.run(adj_original)
+        adj_original_proc = pipeline.run(adj_original, k=3*325)
     else:
         adj_original_proc = None
 
@@ -81,27 +80,30 @@ def prepare_experiment(dataset_name, dataset_path):
         saved_matrix_paths[name] = os.path.relpath(path, project_root)
 
     # 4. Generate Batches
-    print("Generating batches...")
-    # We'll use the fused matrix as the base for batching as it combines perspectives
-    # but we could also use others.
-    batch_base_adj = adj_fused
-    
+    print("Generating batches for all matrices...")
     batchers = {
         'louvain': LouvainBatcher(),
         'khop': KHopBatcher(k=1, max_batch_size=32),
         'spectral': SpectralBatcher(n_clusters=8)
     }
     
-    saved_batch_paths = {}
-    for name, batcher in batchers.items():
-        batches = batcher.batch(batch_base_adj)
-        path = os.path.join(batch_dir, f"{dataset_name.lower()}_{name}.json")
-        with open(path, 'w') as f:
-            json.dump(batches, f)
-        saved_batch_paths[name] = os.path.relpath(path, project_root)
-        print(f"Generated {len(batches)} batches for {name}")
+    saved_batch_paths = []
+    # Iterate over each generated matrix to create batches from different perspectives
+    for m_name, base_adj in matrices.items():
+        print(f"  Processing batches for {m_name} matrix...")
+        for b_name, batcher in batchers.items():
+            try:
+                batches = batcher.batch(base_adj)
+                # Filename: {dataset}_{matrix}_{batcher}.json
+                path = os.path.join(batch_dir, f"{dataset_name.lower()}_{m_name}_{b_name}.json")
+                with open(path, 'w') as f:
+                    json.dump(batches, f)
+                saved_batch_paths.append(os.path.relpath(path, project_root))
+                print(f"    - Generated {len(batches)} batches for {m_name}/{b_name}")
+            except Exception as e:
+                print(f"    - Error generating {m_name}/{b_name} batches: {e}")
 
-    return saved_matrix_paths, saved_batch_paths
+    return list(saved_matrix_paths.values()), saved_batch_paths
 
 def write_config(dataset_name, dataset_path, matrix_paths, batch_paths):
     config = {
@@ -113,15 +115,11 @@ def write_config(dataset_name, dataset_path, matrix_paths, batch_paths):
         'context_length': 288,
         'window_strategy': "absolute",
         'modes': ['single_node', 'whole_matrix', 'adj_neighbour', 'node_batches'],
-        'adjacency_files': [matrix_paths[m] for m in matrix_paths],
-        'node_batches_file': batch_paths['louvain'], # Default to louvain, user can change
+        'adjacency_files': matrix_paths,
+        'node_batches_files': batch_paths,
         'num_runs': 1,
         'output_dir': "results/"
     }
-    
-    # We might want separate configs for different batching methods or just one comprehensive one.
-    # The runner supports only one node_batches_file at a time in some versions, 
-    # but let's check scripts/chronos_experiment/config.py to be sure.
     
     config_path = os.path.join(project_root, 'scripts', 'traffic_experiment', f"config_{dataset_name.lower()}.yaml")
     with open(config_path, 'w') as f:
@@ -131,7 +129,7 @@ def write_config(dataset_name, dataset_path, matrix_paths, batch_paths):
 if __name__ == "__main__":
     datasets = [
         ("PEMS-BAY", "data/PEMS-BAY/"),
-        ("PEMS04", "../data/PEMS04/")
+        ("PEMS04", "data/PEMS04/")
     ]
     
     for name, path in datasets:
