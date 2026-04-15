@@ -151,7 +151,7 @@ def write_config(dataset_name, dataset_path, matrix_paths, batch_paths):
 if __name__ == "__main__":
     datasets = [
         #("PEMS-BAY", "data/PEMS-BAY/"),
-        ("PEMS04", "data/PEMS07/")
+        ("PEMS07", "data/PEMS07/")
     ]
     
     for name, path in datasets:
