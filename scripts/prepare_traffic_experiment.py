@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import warnings
 import yaml
 import numpy as np
 
@@ -37,6 +38,26 @@ def prepare_experiment(dataset_name, dataset_path):
     pearson_gen = PearsonCorrelationGenerator()
     mi_gen = MutualInformationGenerator(n_neighbors=3)
     
+    # ---------------------
+    # --- Check for Zero Variance (Constant Columns) ---
+    std_devs = np.std(gen_data, axis=0)
+    zero_variance_indices = np.where(std_devs == 0)[0]
+
+    if zero_variance_indices.size > 0:
+        # Use a custom warning to make it stand out in the console
+        msg = (f"\n[DATA QUALITY WARNING]: {len(zero_variance_indices)} nodes have zero variance "
+            f"(constant values) and will cause NaNs in the correlation matrix.\n"
+            f"Problematic Indices: {zero_variance_indices.tolist()}\n")
+        warnings.warn(msg)
+
+
+    # -------------
+
+
+
+
+
+
     m_pearson = pearson_gen.generate(gen_data)
     m_mi = mi_gen.generate(gen_data)
     
@@ -114,22 +135,23 @@ def write_config(dataset_name, dataset_path, matrix_paths, batch_paths):
         'horizons': [3, 6, 12],
         'context_length': 288,
         'window_strategy': "absolute",
-        'modes': ['single_node', 'whole_matrix', 'adj_neighbour', 'node_batches'],
+        # 'modes': ['single_node', 'whole_matrix', 'adj_neighbour', 'node_batches'],
+        'modes': ['whole_matrix', 'node_batches'],
         'adjacency_files': matrix_paths,
         'node_batches_files': batch_paths,
         'num_runs': 1,
         'output_dir': "results/"
     }
     
-    config_path = os.path.join(project_root, 'scripts', 'traffic_experiment', f"config_{dataset_name.lower()}.yaml")
+    config_path = os.path.join(project_root, 'scripts', 'traffic_experiment_2', f"config_{dataset_name.lower()}.yaml")
     with open(config_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
     print(f"Config saved to {config_path}")
 
 if __name__ == "__main__":
     datasets = [
-        ("PEMS-BAY", "data/PEMS-BAY/"),
-        ("PEMS04", "data/PEMS04/")
+        #("PEMS-BAY", "data/PEMS-BAY/"),
+        ("PEMS04", "data/PEMS07/")
     ]
     
     for name, path in datasets:

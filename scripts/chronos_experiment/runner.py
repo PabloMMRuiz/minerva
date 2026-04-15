@@ -84,7 +84,7 @@ def _load_pipeline(config: Dict[str, Any]):
     pipeline = Chronos2Pipeline.from_pretrained(
         config["model"],
         device_map=device,
-        torch_dtype=torch_dtype,
+        dtype=torch_dtype,
     )
     return pipeline
 
