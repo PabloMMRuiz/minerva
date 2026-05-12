@@ -16,14 +16,14 @@ from src.utils.graph_viz import plot_node_batches_on_graph
 def visualize_dataset_resources(dataset_name):
     print(f"\n--- Visualizing resources for {dataset_name} ---")
     
-    resource_dir = os.path.join(project_root, 'scripts', 'traffic_experiment')
+    resource_dir = os.path.join(project_root, 'scripts', 'traffic_experiment_extended')
     matrix_dir = os.path.join(resource_dir, 'matrices')
     batch_dir = os.path.join(resource_dir, 'batches')
     plot_dir = os.path.join(resource_dir, 'plots', dataset_name.lower())
     os.makedirs(plot_dir, exist_ok=True)
     
     # 1. Visualize Matrices
-    matrix_names = ['original', 'pearson', 'mi', 'fused']
+    matrix_names = ['original', 'pearson', 'mi', 'granger', 'fused_p_mi', 'fused_g_mi']
     matrices = []
     titles = []
     
@@ -45,7 +45,7 @@ def visualize_dataset_resources(dataset_name):
         print(f"Matrix comparison plot saved for {dataset_name}")
 
     # 2. Visualize Batches
-    batch_configs = ['louvain', 'khop', 'spectral']
+    batch_configs = ['louvain', 'spectral']
     
     for m_name in matrix_names:
         # Load the base matrix for visualization (if it exists)
@@ -74,10 +74,12 @@ def visualize_dataset_resources(dataset_name):
 
 
 if __name__ == "__main__":
-    for ds in ["PEMS-BAY", "PEMS04"]:
+    datasets = ["PEMS-BAY", "PEMS04", "METR-LA", "PEMS08"]
+    for ds in datasets:
         try:
             visualize_dataset_resources(ds)
         except Exception as e:
             print(f"Error visualizing {ds}: {e}")
             
-    print("\nVisualization complete! Plots are in scripts/traffic_experiment/plots/")
+    print("\nVisualization complete! Plots are in scripts/traffic_experiment_extended/plots/")
+

@@ -27,7 +27,7 @@ def validate_batches(dataset_name, dataset_path):
     # Ensure absolute values for correlation to represent "information"
     gt_matrix = np.abs(gt_matrix)
     
-    batch_dir = os.path.join(project_root, 'scripts', 'traffic_experiment', 'batches')
+    batch_dir = os.path.join(project_root, 'scripts', 'traffic_experiment_extended', 'batches')
     batch_files = [f for f in os.listdir(batch_dir) if f.startswith(dataset_name.lower()) and f.endswith('.json')]
     
     results = []
@@ -80,16 +80,20 @@ def validate_batches(dataset_name, dataset_path):
         valid_count = df['Valid'].sum()
         print(f"\n{valid_count}/{len(results)} configurations passed (Intra > Inter).")
     else:
-        print("No valid batch configurations found for testing.")
+        print(f"No valid batch configurations found for {dataset_name}.")
 
 if __name__ == "__main__":
     datasets = [
         ("PEMS-BAY", "data/PEMS-BAY/"),
-        ("PEMS04", "data/PEMS04/")
+        ("PEMS04", "data/PEMS04/"),
+        ("METR-LA", "data/METR-LA/"),
+        ("PEMS08", "data/PEMS08/"),
     ]
     
     for name, path in datasets:
-        if os.path.exists(path):
-            validate_batches(name, path)
+        full_path = os.path.join(project_root, path)
+        if os.path.exists(full_path):
+            validate_batches(name, full_path)
         else:
-            print(f"Dataset path {path} not found. Skipping {name}.")
+            print(f"Dataset path {full_path} not found. Skipping {name}.")
+
