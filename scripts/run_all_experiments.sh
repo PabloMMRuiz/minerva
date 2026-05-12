@@ -5,13 +5,14 @@
 
 # Paths
 CONFIG_DIR="scripts/traffic_experiment_extended/configs"
-# Use the venv as per rules
-PYTHON_BIN="./venv/Scripts/python.exe"
+# Use the venv in the parent directory
+PYTHON_BIN="../venv/Scripts/python.exe"
 
 # Fallback for different environments (e.g. Git Bash vs WSL)
 if [ ! -f "$PYTHON_BIN" ]; then
-    PYTHON_BIN="./venv/bin/python"
+    PYTHON_BIN="../venv/bin/python"
 fi
+
 
 # Final check
 if [ ! -f "$PYTHON_BIN" ]; then
