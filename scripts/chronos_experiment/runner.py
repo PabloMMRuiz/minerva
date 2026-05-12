@@ -319,15 +319,15 @@ def run_experiment(config: Dict[str, Any]) -> str:
                         "time_sec": total_run_duration / len(horizons), # proportional time
                     })
 
+                # Save summary incrementally after each mode/batch run
+                save_summary_csv(run_dir, summary_rows)
                 pbar_outer.update(1)
 
     pbar_outer.close()
-
-    # Save summary
-    csv_path = save_summary_csv(run_dir, summary_rows)
+    
     print(f"\n{'='*60}")
     print(f"Experiment complete. Results saved to: {run_dir}")
-    print(f"Summary CSV: {csv_path}")
+    print(f"Summary CSV: {os.path.join(run_dir, 'summary.csv')}")
     print(f"{'='*60}")
 
     return run_dir

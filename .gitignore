@@ -5,3 +5,5 @@ results/
 *.png
 *.json
 *.pkl
+article/
+scripts/traffic_experiment_extended/
