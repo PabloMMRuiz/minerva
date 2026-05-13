@@ -29,7 +29,8 @@ def _compute_granger_row(x: np.ndarray, i: int, maxlag: int) -> tuple:
         try:
             # verbose=False is crucial for performance and clean logs
             result = grangercausalitytests(
-                test_data, maxlag=maxlag)
+                # funny. Verbose is deprecated but it is also needed or else the function vomits a thousand lines of logs
+                test_data, maxlag=maxlag, verbose=False)
 
             # Extract the SSR-based F-test p-value for each lag and take the minimum
             p_values = [v[0]['ssr_ftest'][1] for v in result.values()]
