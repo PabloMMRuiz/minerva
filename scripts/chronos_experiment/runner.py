@@ -8,11 +8,116 @@ across horizons and window strategies, metric computation, and result storage.
 import os
 import sys
 import time
+import threading
 import numpy as np
 import torch
 from tqdm import tqdm
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+try:
+    import psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    _PSUTIL_AVAILABLE = False
+
+try:
+    import pynvml
+    _NVML_AVAILABLE = True
+except ImportError:
+    _NVML_AVAILABLE = False
+
+
+class ResourceMonitor:
+    """
+    Background thread that samples process RSS memory, VRAM, and GPU utilization.
+
+    Usage::
+
+        monitor = ResourceMonitor(interval=0.5)
+        monitor.start()
+        # ... run experiment ...
+        stats = monitor.stop()
+    """
+
+    def __init__(self, interval: float = 0.5):
+        self._interval = interval
+        self._ram_samples: List[float] = []
+        self._vram_samples: List[float] = []
+        self._gpu_util_samples: List[float] = []
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        
+        if _PSUTIL_AVAILABLE:
+            self._process = psutil.Process(os.getpid())
+            
+        if _NVML_AVAILABLE:
+            try:
+                pynvml.nvmlInit()
+                # Use the current device if possible
+                device_idx = torch.cuda.current_device() if torch.cuda.is_available() else 0
+                self._gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(device_idx)
+            except Exception:
+                self._gpu_handle = None
+        else:
+            self._gpu_handle = None
+
+    def _run(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                # RAM
+                if _PSUTIL_AVAILABLE:
+                    rss_mb = self._process.memory_info().rss / (1024 ** 2)
+                    self._ram_samples.append(rss_mb)
+                
+                # VRAM
+                if torch.cuda.is_available():
+                    vram_mb = torch.cuda.memory_allocated() / (1024 ** 2)
+                    self._vram_samples.append(vram_mb)
+                
+                # GPU Utilization
+                if self._gpu_handle:
+                    util = pynvml.nvmlDeviceGetUtilizationRates(self._gpu_handle).gpu
+                    self._gpu_util_samples.append(float(util))
+                    
+            except Exception:
+                pass
+            self._stop_event.wait(self._interval)
+
+    def start(self) -> None:
+        """Start sampling in the background."""
+        self._ram_samples.clear()
+        self._vram_samples.clear()
+        self._gpu_util_samples.clear()
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> Dict[str, float]:
+        """
+        Stop sampling and return aggregated stats.
+        """
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join()
+        
+        def agg(samples):
+            if not samples:
+                return 0.0, 0.0
+            return float(max(samples)), float(sum(samples) / len(samples))
+
+        ram_peak, ram_avg = agg(self._ram_samples)
+        vram_peak, vram_avg = agg(self._vram_samples)
+        gpu_peak, gpu_avg = agg(self._gpu_util_samples)
+
+        return {
+            "ram_peak_mb": ram_peak,
+            "ram_avg_mb": ram_avg,
+            "vram_peak_mb": vram_peak,
+            "vram_avg_mb": vram_avg,
+            "gpu_peak_util": gpu_peak,
+            "gpu_avg_util": gpu_avg,
+        }
 
 from .metrics import calculate_metrics
 from .modes import (
@@ -234,7 +339,9 @@ def run_experiment(config: Dict[str, Any]) -> str:
                 run_predictions = {h: [] for h in horizons}
                 run_ground_truth = {h: [] for h in horizons}
                 run_step_metrics = {h: [] for h in horizons}
-                
+
+                res_monitor = ResourceMonitor(interval=0.5)
+                res_monitor.start()
                 start_time = time.time()
                 
                 # Eval index loop - predict ONCE for max_horizon
@@ -278,6 +385,7 @@ def run_experiment(config: Dict[str, Any]) -> str:
                         run_step_metrics[h].append(calculate_metrics(gt_h, preds_h))
 
                 total_run_duration = time.time() - start_time
+                res_stats = res_monitor.stop()
                 
                 # Consolidate and save for each horizon
                 for h in horizons:
@@ -316,7 +424,13 @@ def run_experiment(config: Dict[str, Any]) -> str:
                         "rmse": agg_metrics["rmse"],
                         "mse": agg_metrics["mse"],
                         "mape": agg_metrics["mape"],
-                        "time_sec": total_run_duration / len(horizons), # proportional time
+                        "time_sec": total_run_duration / len(horizons),  # proportional time
+                        "ram_peak_mb": res_stats["ram_peak_mb"],
+                        "ram_avg_mb": res_stats["ram_avg_mb"],
+                        "vram_peak_mb": res_stats["vram_peak_mb"],
+                        "vram_avg_mb": res_stats["vram_avg_mb"],
+                        "gpu_peak_util": res_stats["gpu_peak_util"],
+                        "gpu_avg_util": res_stats["gpu_avg_util"],
                     })
 
                 # Save summary incrementally after each mode/batch run
