@@ -25,8 +25,8 @@ import argparse
 import sys
 
 import json
-from chronos_experiment.config import load_config, build_config_from_args
-from chronos_experiment.runner import run_experiment
+from .config import load_config, build_config_from_args
+from .runner import run_experiment
 
 
 def main():
