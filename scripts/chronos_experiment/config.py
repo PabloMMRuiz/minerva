@@ -22,10 +22,12 @@ DEFAULT_CONFIG = {
     "test_ratio": None,  # None means read from desc.json
     "num_runs": 1,
     "output_dir": "../results/",
+    "windowing_mode": "overlapping",  # "overlapping" or "non_overlapping"
 }
 
 VALID_MODES = {"single_node", "whole_matrix", "adj_neighbour", "node_batches"}
 VALID_WINDOW_STRATEGIES = {"absolute", "divided"}
+VALID_WINDOWING_MODES = {"overlapping", "non_overlapping"}
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
@@ -80,6 +82,8 @@ def build_config_from_args(args) -> Dict[str, Any]:
         config["batch_sizes"] = [args.batch_size]
     if args.batch_sizes:
         config["batch_sizes"] = args.batch_sizes
+    if args.windowing_mode:
+        config["windowing_mode"] = args.windowing_mode
 
     _validate_config(config)
     return config
@@ -97,6 +101,12 @@ def _validate_config(config: Dict[str, Any]) -> None:
     if ws not in VALID_WINDOW_STRATEGIES:
         raise ValueError(
             f"Invalid window_strategy '{ws}'. Valid: {VALID_WINDOW_STRATEGIES}"
+        )
+
+    wm = config.get("windowing_mode", "overlapping")
+    if wm not in VALID_WINDOWING_MODES:
+        raise ValueError(
+            f"Invalid windowing_mode '{wm}'. Valid: {VALID_WINDOWING_MODES}"
         )
 
     if "adj_neighbour" in config.get("modes", []):

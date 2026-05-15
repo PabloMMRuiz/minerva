@@ -10,6 +10,7 @@ import sys
 import time
 import threading
 import numpy as np
+import pandas as pd
 import torch
 from tqdm import tqdm
 from datetime import datetime
@@ -119,7 +120,16 @@ class ResourceMonitor:
             "gpu_avg_util": gpu_avg,
         }
 
-from .metrics import calculate_metrics
+from .metrics import (
+    calculate_metrics,
+    calculate_masked_metrics,
+    probabilistic_metrics,
+    evaluation,
+    masked_mae_np,
+    masked_rmse_np,
+    masked_mse_np,
+    masked_mape_np,
+)
 from .modes import (
     predict_single_node,
     predict_whole_matrix,
@@ -172,6 +182,45 @@ def _load_data(config: Dict[str, Any]):
     return data, metadata, adj_matrices
 
 
+def _prepare_long_df(data: np.ndarray, metadata: Dict[str, Any], config: Dict[str, Any]):
+    """
+    Convert the [T, N, F] memmap into a long-format pandas DataFrame.
+
+    Returns (df_long, base_start_time). The DataFrame is indexed by timestamp
+    and sorted for fast .loc slicing.
+    """
+    num_time_steps = data.shape[0]
+    num_nodes = data.shape[1]
+    freq_mins = metadata.get("frequency (minutes)", 5)
+
+    # Create timestamps (arbitrary start if not present)
+    start_time = pd.Timestamp("2024-01-01")
+    timestamps = pd.date_range(start=start_time, periods=num_time_steps, freq=f"{freq_mins}min")
+
+    # Flatten data[:, :, 0] (the target value)
+    target_data = np.asarray(data[:, :, 0])  # [T, N]
+
+    id_col = "sensor_id"
+    ts_col = "timestamp"
+    target_col = "value"
+
+    # Vectorised conversion: repeat timestamps for each node, tile node ids
+    node_ids = np.repeat(np.arange(num_nodes), num_time_steps)
+    ts_tiled = np.tile(timestamps, num_nodes)
+    values = target_data.T.ravel()  # [N*T] — column-major per node
+
+    df_long = pd.DataFrame({
+        ts_col: ts_tiled,
+        target_col: values,
+        id_col: node_ids,
+    })
+
+    # Set index and sort for faster filtering
+    df_long.set_index(ts_col, inplace=True)
+    df_long.sort_index(inplace=True)
+    return df_long, start_time
+
+
 def _load_pipeline(config: Dict[str, Any]):
     """Load the Chronos2Pipeline."""
     from chronos import Chronos2Pipeline
@@ -217,7 +266,7 @@ def run_experiment(config: Dict[str, Any]) -> str:
     print("=" * 60)
 
     # 1. Load data
-    print("\n[1/4] Loading data...")
+    print("\n[1/5] Loading data...")
     data, metadata, adj_matrices = _load_data(config)
 
     dataset_name = metadata.get("name", "unknown")
@@ -230,11 +279,11 @@ def run_experiment(config: Dict[str, Any]) -> str:
     print(f"  Nodes: {num_nodes}")
 
     # 2. Load model
-    print("\n[2/4] Loading model...")
+    print("\n[2/5] Loading model...")
     pipeline = _load_pipeline(config)
 
     # 3. Prepare experiment parameters
-    print("\n[3/4] Preparing experiment...")
+    print("\n[3/5] Preparing experiment...")
     test_ratio = _get_test_ratio(config, metadata)
     test_start = int(total_steps * (1 - test_ratio))
     horizons = config.get("horizons", [3, 6, 12])
@@ -243,6 +292,7 @@ def run_experiment(config: Dict[str, Any]) -> str:
     window_strategy = config.get("window_strategy", "absolute")
     base_context_length = config.get("context_length", 12)
     num_runs = config.get("num_runs", 1)
+    null_val = metadata.get("regular_settings", {}).get("NULL_VAL", 0.0)
 
     # Create output directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -255,14 +305,34 @@ def run_experiment(config: Dict[str, Any]) -> str:
     print(f"  Window strategy: {window_strategy}")
     print(f"  Base context length: {base_context_length}")
     print(f"  Num runs: {num_runs}")
+    print(f"  NULL_VAL: {null_val}")
     print(f"  Output: {run_dir}")
 
     # Evaluation indices
-    eval_indices = np.arange(test_start, total_steps - max_horizon, max_horizon)
-    print(f"  Evaluation windows: {len(eval_indices)}")
+    windowing_mode = config.get("windowing_mode", "overlapping")
+    eval_step = 1 if windowing_mode == "overlapping" else max_horizon
+    eval_indices = np.arange(test_start, total_steps - max_horizon, eval_step)
+    print(f"  Evaluation windows: {len(eval_indices)} ({windowing_mode})")
 
-    # 4. Run experiments
-    print("\n[4/4] Running experiments...")
+    # 4. Prepare long DataFrame (once for the whole experiment)
+    print("\n[4/5] Converting data to long DataFrame...")
+    ts_col = "timestamp"
+    id_col = "sensor_id"
+    target_col = "value"
+    freq = metadata.get("frequency (minutes)", 5)
+
+    df_long_full, base_start_time = _prepare_long_df(data, metadata, config)
+    print(f"  DataFrame shape: {df_long_full.shape}")
+
+    # Precompute time deltas
+    stride_delta = pd.Timedelta(minutes=eval_step * freq)
+    pred_delta = pd.Timedelta(minutes=max_horizon * freq)
+    experiment_start_time = base_start_time + pd.Timedelta(minutes=test_start * freq)
+    experiment_end_time = base_start_time + pd.Timedelta(minutes=(total_steps - 1) * freq)
+    safe_experiment_end = experiment_end_time - pred_delta
+
+    # 5. Run experiments
+    print("\n[5/5] Running experiments...")
     summary_rows = []
 
     # Progress bar for all combinations of modes and runs
@@ -284,10 +354,6 @@ def run_experiment(config: Dict[str, Any]) -> str:
             # 1. Explicit batches from config
             explicit = config.get("node_batches")
             if explicit:
-                # Check if it's List[List[int]] (one set) or List[List[List[int]]] (multiple sets)
-                # We assume if the first element is a list, and its first element is also a list, it's multiple sets.
-                # Actually, explicit node_batches is always List[List[int]] for ONE set.
-                # If we have multiple, it's List[List[List[int]]].
                 if isinstance(explicit[0][0], int):
                     mode_items.append(("batches_0", explicit))
                 else:
@@ -310,7 +376,6 @@ def run_experiment(config: Dict[str, Any]) -> str:
                 mode_items.append((f"size_{size}", batches))
             
             if not mode_items:
-                # Fallback to whole matrix
                 mode_items.append(("batches_default", [list(range(num_nodes))]))
                 print("  Warning: No batching info for node_batches mode. Falling back to default batch.")
             
@@ -331,100 +396,158 @@ def run_experiment(config: Dict[str, Any]) -> str:
                 batches=item_data if mode == "node_batches" else None
             )
 
+            # Filter df_long for node_batches mode
+            if mode == "node_batches":
+                relevant_ids = [idx for batch in item_data for idx in batch]
+                df_long = df_long_full[df_long_full[id_col].isin(relevant_ids)]
+            else:
+                df_long = df_long_full
+
             for run_idx in range(num_runs):
                 suffix = f" (Run {run_idx+1})" if num_runs > 1 else ""
-                
-                # We initialize storage for ALL horizons in this run
-                # dict of lists: horizon -> List[np.ndarray]
-                run_predictions = {h: [] for h in horizons}
-                run_ground_truth = {h: [] for h in horizons}
-                run_step_metrics = {h: [] for h in horizons}
+
+                # Metrics storage per horizon
+                horizon_metrics = {
+                    h: {
+                        "mae": [], "rmse": [], "mse": [], "mape": [],
+                        "masked_mae": [], "masked_rmse": [], "masked_mse": [], "masked_mape": [],
+                        "coverage": [], "iqr_mean": [], "iqr_median": [], "iqr_std": [],
+                    } for h in horizons
+                }
 
                 res_monitor = ResourceMonitor(interval=0.5)
                 res_monitor.start()
-                start_time = time.time()
-                
-                # Eval index loop - predict ONCE for max_horizon
-                pbar_inner = tqdm(eval_indices, desc=f"Mode: {mode_display}{suffix}", leave=False)
-                for idx in pbar_inner:
-                    context_start = idx - eff_ctx
-                    if context_start < 0:
-                        continue
+                start_time_exec = time.time()
 
-                    # Predict max_horizon
-                    if mode == "single_node":
-                        preds_full = predict_single_node(
-                            data, pipeline, context_start, eff_ctx,
-                            max_horizon, num_nodes, progress=False,
-                        )
-                    elif mode == "whole_matrix":
-                        preds_full = predict_whole_matrix(
-                            data, pipeline, context_start, eff_ctx,
-                            max_horizon, num_nodes, progress=False,
-                        )
-                    elif mode == "adj_neighbour":
-                        preds_full = predict_adj_neighbour(
-                            data, pipeline, context_start, eff_ctx,
-                            max_horizon, num_nodes, item_data, progress=False,
-                        )
-                    elif mode == "node_batches":
-                        preds_full = predict_node_batches(
-                            data, pipeline, context_start, eff_ctx,
-                            max_horizon, num_nodes, item_data, progress=False,
-                        )
-                    else:
-                        raise ValueError(f"Unknown mode: {mode}")
+                current_pred_time = experiment_start_time
+                step_count = 0
 
-                    # Distribute slices to each horizon
-                    for h in horizons:
-                        preds_h = preds_full[:, :h]
-                        gt_h = data[idx:idx + h, :, 0].T
-                        
-                        run_predictions[h].append(preds_h)
-                        run_ground_truth[h].append(gt_h)
-                        run_step_metrics[h].append(calculate_metrics(gt_h, preds_h))
+                pbar_inner = tqdm(
+                    total=len(eval_indices),
+                    desc=f"Mode: {mode_display}{suffix}",
+                    leave=False,
+                )
 
-                total_run_duration = time.time() - start_time
-                res_stats = res_monitor.stop()
-                
-                # Consolidate and save for each horizon
-                for h in horizons:
-                    h_preds = run_predictions[h]
-                    h_gts = run_ground_truth[h]
-                    h_metrics = run_step_metrics[h]
-                    
-                    if not h_preds:
-                        continue
-                        
-                    # Aggregate results
-                    agg_metrics = {
-                        k: float(np.mean([m[k] for m in h_metrics]))
-                        for k in ["mae", "rmse", "mse", "mape"]
-                    }
-                    
-                    # Save step data
-                    mode_label = f"{mode}_{item_name}" if item_name else mode
-                    save_step_data(
-                        run_dir, mode_label, h, window_strategy,
-                        h_preds, h_gts, h_metrics, eff_ctx,
+                while current_pred_time <= safe_experiment_end:
+                    # Build context DataFrame
+                    ctx_start = current_pred_time - pd.Timedelta(minutes=eff_ctx * freq)
+                    ctx_end = current_pred_time - pd.Timedelta(seconds=1)
+                    context_df = df_long.loc[ctx_start:ctx_end].reset_index()
+
+                    # Build test DataFrame
+                    test_end = current_pred_time + pred_delta - pd.Timedelta(seconds=1)
+                    test_df = df_long.loc[current_pred_time:test_end].reset_index()
+
+                    # Make forecast via predict_df
+                    forecast_df = pipeline.predict_df(
+                        context_df,
+                        prediction_length=max_horizon,
+                        quantile_levels=[0.1, 0.5, 0.9],
+                        id_column=id_col,
+                        timestamp_column=ts_col,
+                        target=target_col,
+                        cross_learning=(mode != "single_node"),
                     )
 
-                    # Add summary row
+                    # Extract 0.5 quantile as point prediction
+                    if "0.5" in forecast_df.columns:
+                        forecast_df["predictions"] = forecast_df["0.5"]
+                    elif "predictions" not in forecast_df.columns:
+                        forecast_df["predictions"] = forecast_df.iloc[:, -1]
+
+                    # Evaluate each horizon
+                    for h in horizons:
+                        target_ts = current_pred_time + pd.Timedelta(minutes=h * freq)
+
+                        forecast_h = forecast_df[forecast_df[ts_col] == target_ts]
+                        true_h = test_df[test_df[ts_col] == target_ts]
+
+                        if forecast_h.empty or true_h.empty:
+                            continue
+
+                        merged_h = pd.merge(true_h, forecast_h, on=[id_col, ts_col])
+                        if merged_h.empty:
+                            continue
+
+                        y_true = merged_h[target_col].values.astype(np.float32)
+                        y_pred = merged_h["predictions"].values.astype(np.float32)
+
+                        # Standard metrics
+                        mae = float(np.mean(np.abs(y_true - y_pred)))
+                        mse_val = float(np.mean((y_true - y_pred) ** 2))
+                        rmse_val = float(np.sqrt(mse_val))
+                        mape_val = float(
+                            np.mean(np.abs((y_true - y_pred) / np.clip(y_true, 1.0, None))) * 100
+                        )
+
+                        horizon_metrics[h]["mae"].append(mae)
+                        horizon_metrics[h]["rmse"].append(rmse_val)
+                        horizon_metrics[h]["mse"].append(mse_val)
+                        horizon_metrics[h]["mape"].append(mape_val)
+
+                        # Masked metrics
+                        horizon_metrics[h]["masked_mae"].append(
+                            float(masked_mae_np(y_pred, y_true, null_val=null_val))
+                        )
+                        horizon_metrics[h]["masked_rmse"].append(
+                            float(masked_rmse_np(y_pred, y_true, null_val=null_val))
+                        )
+                        horizon_metrics[h]["masked_mse"].append(
+                            float(masked_mse_np(y_pred, y_true, null_val=null_val))
+                        )
+                        horizon_metrics[h]["masked_mape"].append(
+                            float(masked_mape_np(y_pred, y_true, null_val=null_val))
+                        )
+
+                        # Probabilistic metrics
+                        prob = probabilistic_metrics(
+                            forecast_h, true_h, id_col, ts_col, target_col
+                        )
+                        horizon_metrics[h]["coverage"].append(prob["coverage"])
+                        horizon_metrics[h]["iqr_mean"].append(prob["iqr_mean"])
+                        horizon_metrics[h]["iqr_median"].append(prob["iqr_median"])
+                        horizon_metrics[h]["iqr_std"].append(prob["iqr_std"])
+
+                    current_pred_time += stride_delta
+                    step_count += 1
+                    pbar_inner.update(1)
+
+                pbar_inner.close()
+                total_run_duration = time.time() - start_time_exec
+                res_stats = res_monitor.stop()
+
+                # Consolidate and save for each horizon
+                for h in horizons:
+                    h_m = horizon_metrics[h]
+                    if not h_m["mae"]:
+                        continue
+
+                    agg_metrics = {k: float(np.mean(v)) for k, v in h_m.items()}
+
                     summary_rows.append({
                         "dataset": dataset_name,
                         "mode": mode,
                         "config_name": item_name or "",
                         "window_strategy": window_strategy,
+                        "windowing_mode": windowing_mode,
                         "context_length": eff_ctx,
                         "horizon": h,
                         "run": run_idx + 1,
                         "num_nodes": num_nodes,
-                        "num_eval_windows": len(h_metrics),
+                        "num_eval_windows": len(h_m["mae"]),
                         "mae": agg_metrics["mae"],
                         "rmse": agg_metrics["rmse"],
                         "mse": agg_metrics["mse"],
                         "mape": agg_metrics["mape"],
-                        "time_sec": total_run_duration / len(horizons),  # proportional time
+                        "masked_mae": agg_metrics["masked_mae"],
+                        "masked_rmse": agg_metrics["masked_rmse"],
+                        "masked_mse": agg_metrics["masked_mse"],
+                        "masked_mape": agg_metrics["masked_mape"],
+                        "coverage": agg_metrics["coverage"],
+                        "iqr_mean": agg_metrics["iqr_mean"],
+                        "iqr_median": agg_metrics["iqr_median"],
+                        "iqr_std": agg_metrics["iqr_std"],
+                        "time_sec": total_run_duration / len(horizons),
                         "ram_peak_mb": res_stats["ram_peak_mb"],
                         "ram_avg_mb": res_stats["ram_avg_mb"],
                         "vram_peak_mb": res_stats["vram_peak_mb"],
@@ -433,7 +556,6 @@ def run_experiment(config: Dict[str, Any]) -> str:
                         "gpu_avg_util": res_stats["gpu_avg_util"],
                     })
 
-                # Save summary incrementally after each mode/batch run
                 save_summary_csv(run_dir, summary_rows)
                 pbar_outer.update(1)
 

@@ -15,24 +15,29 @@ from typing import Optional, List
 
 def _extract_median_prediction(forecast_tensor: torch.Tensor) -> np.ndarray:
     """
-    Extract the median (quantile index 1) prediction from a Chronos forecast.
+    Extract the median prediction from a Chronos 2 forecast.
 
-    Handles both 4D [Series, Variates, Time, Quantiles] and
-    3D [Variates, Time, Quantiles] output shapes.
+    Chronos 2's predict() returns sample paths, not quantile bins, so the
+    last dimension is samples — not quantiles. We take the median over that
+    samples dimension.
+
+    Handles both 4D [Series, Variates, Time, Samples] and
+    3D [Variates, Time, Samples] output shapes.
 
     Returns:
         np.ndarray of shape [Variates, Time].
     """
     pred = forecast_tensor[0]  # remove batch dim
+
     if pred.ndim == 4:
-        # [Series, Variates, Time, Quantiles]
-        return pred[0, :, :, 1].cpu().numpy()
+        # [Series, Variates, Time, Samples] -> median over samples -> [Variates, Time]
+        return pred[0].median(dim=-1).values.cpu().numpy()
     elif pred.ndim == 3:
-        # [Variates, Time, Quantiles]
-        return pred[:, :, 1].cpu().numpy()
+        # [Variates, Time, Samples] -> median over samples -> [Variates, Time]
+        return pred.median(dim=-1).values.cpu().numpy()
     elif pred.ndim == 2:
-        # [Time, Quantiles]  (single variate)
-        return pred[:, 1].cpu().numpy().reshape(1, -1)
+        # [Time, Samples] (single variate) -> median over samples -> [Time] -> [1, Time]
+        return pred.median(dim=-1).values.cpu().numpy().reshape(1, -1)
     else:
         raise ValueError(f"Unexpected forecast shape: {pred.shape}")
 

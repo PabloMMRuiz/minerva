@@ -161,6 +161,13 @@ Examples:
         default=None,
         help="One or more sizes for automatic node partitioning.",
     )
+    parser.add_argument(
+        "--windowing-mode",
+        type=str,
+        default=None,
+        choices=["overlapping", "non_overlapping"],
+        help="Windowing strategy: 'overlapping' (step=1) or 'non_overlapping' (step=max_horizon).",
+    )
 
     args = parser.parse_args()
 
@@ -207,6 +214,10 @@ Examples:
                 config['node_batches'] = args.node_batches_files_data
             else:
                 config['node_batches'].extend(args.node_batches_files_data)
+
+    # Global overrides (apply even if --config is used)
+    if args.windowing_mode:
+        config['windowing_mode'] = args.windowing_mode
 
     # Run the experiment
     try:
