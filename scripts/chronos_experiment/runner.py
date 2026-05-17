@@ -438,16 +438,40 @@ def run_experiment(config: Dict[str, Any]) -> str:
                     test_end = current_pred_time + pred_delta - pd.Timedelta(seconds=1)
                     test_df = df_long.loc[current_pred_time:test_end].reset_index()
 
-                    # Make forecast via predict_df
-                    forecast_df = pipeline.predict_df(
-                        context_df,
-                        prediction_length=max_horizon,
-                        quantile_levels=[0.1, 0.5, 0.9],
-                        id_column=id_col,
-                        timestamp_column=ts_col,
-                        target=target_col,
-                        cross_learning=(mode != "single_node"),
-                    )
+                    # Make forecast via predict_df (handling node_batches separately)
+                    if mode == "node_batches":
+                        forecast_dfs = []
+                        for batch in item_data:
+                            if not batch:
+                                continue
+                            batch_ctx_df = context_df[context_df[id_col].isin(batch)]
+                            if batch_ctx_df.empty:
+                                continue
+                            batch_forecast_df = pipeline.predict_df(
+                                batch_ctx_df,
+                                prediction_length=max_horizon,
+                                quantile_levels=[0.1, 0.5, 0.9],
+                                id_column=id_col,
+                                timestamp_column=ts_col,
+                                target=target_col,
+                                cross_learning=True,
+                            )
+                            forecast_dfs.append(batch_forecast_df)
+                        if forecast_dfs:
+                            forecast_df = pd.concat(forecast_dfs, ignore_index=True)
+                        else:
+                            forecast_df = pd.DataFrame()
+                    else:
+                        forecast_df = pipeline.predict_df(
+                            context_df,
+                            prediction_length=max_horizon,
+                            quantile_levels=[0.1, 0.5, 0.9],
+                            id_column=id_col,
+                            timestamp_column=ts_col,
+                            target=target_col,
+                            cross_learning=(mode != "single_node"),
+                        )
+
 
                     # Extract 0.5 quantile as point prediction
                     if "0.5" in forecast_df.columns:
