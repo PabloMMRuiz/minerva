@@ -457,7 +457,7 @@ def run_experiment(config: Dict[str, Any]) -> str:
 
                     # Evaluate each horizon
                     for h in horizons:
-                        target_ts = current_pred_time + pd.Timedelta(minutes=h * freq)
+                        target_ts = current_pred_time + pd.Timedelta(minutes=(h - 1) * freq)
 
                         forecast_h = forecast_df[forecast_df[ts_col] == target_ts]
                         true_h = test_df[test_df[ts_col] == target_ts]
